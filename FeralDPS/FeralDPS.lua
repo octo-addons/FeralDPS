@@ -31,9 +31,15 @@
 --   /fdps chat <tab> - route all addon output to a chat tab (FeralTrack follows)
 --   /fdps reshift  - Reshift (OctoWoW powershift) when energy runs dry (default on)
 --   /fdps reshift energy <n> / reserve <mana> / cost <mana>
+--   /fdps idol     - swap idols on the press: bleed idol normally, Moonfang on
+--                    bleed-immune targets (default off); idol bleed|immune <name>
 --   /fdps show / hide / debug / reload / help
 
 FeralDPS = {}
+
+-- Defined further down (gear section); declared here so the rotation can
+-- re-read the relic slot right after an idol swap (1.15.22).
+local readRelic, computeCosts
 
 -- ============================================================
 -- Internal state
@@ -65,6 +71,15 @@ local F_ = {
   reshiftGain   = nil,    -- the energy a Reshift sets the bar to, measured (Nampower energize events)
   reshiftMinNet = 20,     -- a Reshift must be worth at least this much energy (gain - bar - TF recast)
   bossHp        = 25000,  -- an elite with this much max health counts as a boss (dungeon bosses)
+  -- Idol swap (1.15.22): Idol of Ferocity's -3 energy on Claw and Rake is
+  -- worth nothing on a bleed-immune boss, where Shred is the only builder.
+  -- Idol of the Moonfang (50 mana / 125 hp per Shred, doubled on a crit)
+  -- feeds Reshifts there instead. The relic slot swaps in combat without a
+  -- GCD, so the press that finds the wrong idol on equips the right one.
+  idolSwap      = false,
+  idolBleed     = "Idol of Ferocity",
+  idolImmune    = "Idol of the Moonfang",
+  lastIdolSwapTime = 0,
   reshiftReserve = 700,   -- mana kept back: a Cat Form (55% base mana) after a shift out, and some
   reshiftCost   = 348,    -- mana per Reshift as the spellbook shows it (Natural Shapeshifter included)
   reshiftCount  = 0, lastReshiftTime = 0, reshiftHoldUntil = 0, reshiftWatch = nil,
@@ -1023,10 +1038,20 @@ local function nextSpell_Cat(opts)
   end
 
   local ttd = getTTD()
+  -- 1.15.21: Faerie Fire costs no energy but takes the GCD. Cast at the top of
+  -- the list whenever it was missing, it pushed a builder back one GCD every
+  -- time (47 casts in the MC run of 12/10, with six druids in the raid). Now it
+  -- goes out when the GCD would be idle anyway - energy under the cheapest
+  -- builder and no Clearcasting - or in the first seconds of a fight, so the
+  -- raid gets the armor debuff early. Budroidd's macro does the same.
   if F_.useFaerieFire and getFFRemaining() <= 0 and not isTargetDebuff(F_.texFF)
      and not isImmune("Faerie Fire (Feral)") and not npBlocked("Faerie Fire (Feral)") and ffReady()
      and (isBoss() or not ttd or ttd >= F_.ttdMinFF) then
-    return "Faerie Fire (Feral)"
+    local cheapest = math.min(F_.costs["Claw"] or 40, F_.costs["Shred"] or 48, F_.costs["Rake"] or 35)
+    local opening  = (GetTime() - (F_.fightStart or 0)) < 5
+    if opening or (opts.power < cheapest and not isClearcasting()) then
+      return "Faerie Fire (Feral)"
+    end
   end
 
   -- Tiger's Fury sits ABOVE the finishers: with Blood Frenzy it runs 18s and
@@ -1361,6 +1386,62 @@ local function tryReshift(power)
   return true
 end
 
+-- ============================================================
+-- IDOL SWAP (1.15.22)
+-- ============================================================
+-- Which idol the current target calls for: the bleed idol (Ferocity) unless
+-- the target is on the learned bleed-immune list, where Moonfang's mana per
+-- Shred is the only thing an idol can still add.
+local function wantedIdol()
+  if not F_.idolSwap then return nil end
+  if not UnitExists("target") or not UnitCanAttack("player", "target") then return nil end
+  local name = isImmune("Rip") and F_.idolImmune or F_.idolBleed
+  if not name or name == "" then return nil end
+  return name
+end
+
+local function findInBags(name)
+  for bag = 0, 4 do
+    for slot = 1, (GetContainerNumSlots(bag) or 0) do
+      local link = GetContainerItemLink(bag, slot)
+      if link and string.find(link, name, 1, true) then
+        local _, _, locked = GetContainerItemInfo(bag, slot)
+        if not locked then return bag, slot end
+      end
+    end
+  end
+  return nil
+end
+
+-- Equips the idol the target calls for, if it is not on already and it is in
+-- the bags. Runs only from a key press (never from a timer or an event), at
+-- most once every 2s, and leaves the cursor clean. Returns true on a swap.
+local function ensureIdol()
+  local wanted = wantedIdol()
+  if not wanted then return false end
+  local rslot = GetInventorySlotInfo("RangedSlot")
+  local link = GetInventoryItemLink("player", rslot)
+  if link and string.find(link, wanted, 1, true) then return false end
+  if (GetTime() - (F_.lastIdolSwapTime or 0)) < 2 then return false end
+  if CursorHasItem() then return false end
+  local bag, slot = findInBags(wanted)
+  if not bag then
+    if F_.idolMissingWarned ~= wanted then
+      F_.idolMissingWarned = wanted
+      trace("idol", wanted .. " is not in the bags - keeping " .. tostring(F_.relic or "the current relic"))
+    end
+    return false
+  end
+  F_.lastIdolSwapTime = GetTime()
+  PickupContainerItem(bag, slot)
+  if CursorHasItem() then EquipCursorItem(rslot) end
+  if CursorHasItem() then ClearCursor() end
+  trace("idol", "-> " .. wanted .. (isImmune("Rip") and " (bleed-immune target)" or ""))
+  if readRelic then readRelic() end
+  if computeCosts then computeCosts() end
+  return true
+end
+
 local function executeRotation(specOverride)
   -- Every button press lands here first, so companion addons can measure the
   -- press rate itself (FeralTrack: presses/s and pauses between presses).
@@ -1434,6 +1515,11 @@ local function executeRotation(specOverride)
   -- waiting until there is enough energy for an ability, would cost real swings
   -- every time one mob dies and the next is picked up.
   ensureAttacking()
+
+  -- Idol for this target (cat only, /fdps idol). A relic swap has no GCD, so
+  -- the ability picked below still goes out on the same press - exactly what
+  -- an /equip + /cast macro does.
+  if isCatSpec(spec) and F_.idolSwap then ensureIdol() end
 
   -- Savage Bite has NO global cooldown on this server, so in bear it goes out
   -- on every press it is ready for, on top of whatever the GCD ability is.
@@ -1881,6 +1967,9 @@ saveSettings = function()
     reshiftReserve = F_.reshiftReserve,
     reshiftMinNet = F_.reshiftMinNet,
     bossHp        = F_.bossHp,
+    idolSwap      = F_.idolSwap,
+    idolBleed     = F_.idolBleed,
+    idolImmune    = F_.idolImmune,
     reshiftCost   = F_.reshiftCost,
     useEnrage     = F_.useEnrage,
     useRagePot    = F_.useRagePot,
@@ -1929,7 +2018,7 @@ local function talentSummary()
     F_.ferocityRank, F_.impShredRank, F_.carnageRank, F_.bloodFrenzyRank, F_.furorRank, F_.natShifterRank)
 end
 
-local function computeCosts()
+computeCosts = function()
   local fero  = F_.ferocityRank
   local shred = F_.impShredRank
   local idol  = F_.idolReduction
@@ -1965,7 +2054,7 @@ end
 --                       so the tick COUNT is unchanged - the whole bleed is
 --                       just compressed. Only the durations move.
 --   Idol of Brutality : -3 rage on Maul and Swipe (bear)
-local function readRelic()
+readRelic = function()
   F_.idolReduction = 0
   F_.idolRage    = 0
   F_.relicFactor = 1
@@ -1986,6 +2075,11 @@ local function readRelic()
   elseif string.find(link, "Idol of Brutality") then
     F_.idolRage = 3
     F_.relic = "Idol of Brutality"
+  elseif string.find(link, "Idol of the Moonfang") then
+    F_.relic = "Idol of the Moonfang"   -- mana/health per Shred; no cost or duration change
+  else
+    local _, _, n = string.find(link, "%[(.-)%]")
+    F_.relic = n
   end
   setRipDuration(F_.lastRipCP > 0 and F_.lastRipCP or 5)
 end
@@ -2011,6 +2105,9 @@ local function feralInit()
     if tonumber(FeralDPS_Settings.reshiftReserve) then F_.reshiftReserve = tonumber(FeralDPS_Settings.reshiftReserve) end
     if tonumber(FeralDPS_Settings.reshiftMinNet)  then F_.reshiftMinNet  = tonumber(FeralDPS_Settings.reshiftMinNet)  end
     if tonumber(FeralDPS_Settings.bossHp)         then F_.bossHp         = tonumber(FeralDPS_Settings.bossHp)         end
+    if FeralDPS_Settings.idolSwap      ~= nil then F_.idolSwap      = FeralDPS_Settings.idolSwap      end
+    if type(FeralDPS_Settings.idolBleed)  == "string" and FeralDPS_Settings.idolBleed  ~= "" then F_.idolBleed  = FeralDPS_Settings.idolBleed  end
+    if type(FeralDPS_Settings.idolImmune) == "string" and FeralDPS_Settings.idolImmune ~= "" then F_.idolImmune = FeralDPS_Settings.idolImmune end
     if tonumber(FeralDPS_Settings.reshiftCost)    then F_.reshiftCost    = tonumber(FeralDPS_Settings.reshiftCost)    end
     if FeralDPS_Settings.useEnrage     ~= nil then F_.useEnrage     = FeralDPS_Settings.useEnrage     end
     if FeralDPS_Settings.useRagePot    ~= nil then F_.useRagePot    = FeralDPS_Settings.useRagePot    end
@@ -2342,6 +2439,26 @@ function FeralDPS_OnLoad()
       saveSettings()          -- forget learned immunities on disk too
       feralInit()
 
+    elseif cmd == "idol" then
+      -- /fdps idol                  toggle the swap
+      -- /fdps idol bleed <name>     idol for everything that bleeds (Ferocity)
+      -- /fdps idol immune <name>    idol for bleed-immune targets (Moonfang)
+      local _, _, sub, name = string.find(rest or "", "^(%S*)%s*(.-)%s*$")
+      sub = string.lower(sub or "")
+      if (sub == "bleed" or sub == "immune") and name ~= "" then
+        if sub == "bleed" then F_.idolBleed = name else F_.idolImmune = name end
+        saveSettings()
+        out("|cFFFFD700FeralDPS|r: " .. sub .. " idol is now |cFFFFFFFF" .. name .. "|r" .. (findInBags(name) and "" or " (not in the bags right now)"))
+      else
+        toggle("idolSwap", "Idol swap on the press (" .. tostring(F_.idolBleed) .. " / " .. tostring(F_.idolImmune) .. " on bleed-immune targets)")
+        local rslot = GetInventorySlotInfo("RangedSlot")
+        local link = GetInventoryItemLink("player", rslot)
+        local _, _, worn = string.find(link or "", "%[(.-)%]")
+        out("  wearing: " .. tostring(worn or "nothing") .. ".  In the bags: "
+          .. (findInBags(F_.idolBleed or "") and F_.idolBleed or "-") .. " / "
+          .. (findInBags(F_.idolImmune or "") and F_.idolImmune or "-"))
+      end
+
     elseif cmd == "bosshp" then
       local n = tonumber(rest)
       if n then
@@ -2494,6 +2611,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps berserk|r— auto-Berserk (off = save it for Fear)")
       out("  |cFFFFFFFF/fdps pull|r   — allow acting on unpulled mobs mid-fight (default off)")
       out("  |cFFFFFFFF/fdps btrash|r — Berserk on cooldown instead of waiting for Rip (default off)")
+      out("  |cFFFFFFFF/fdps idol|r   — swap idols on the press: bleed idol normally, Moonfang on bleed-immune targets (default off); idol bleed|immune <name>")
       out("  |cFFFFFFFF/fdps enrage|r — bear: Enrage for rage when starved, trash only (default on)")
       out("  |cFFFFFFFF/fdps pot|r    — bosses: drink Mighty Rage Potion at the right moment (default off; shares the potion cooldown)")
       out("  |cFFFFFFFF/fdps juju|r   — bosses: use Juju Flurry whenever it is ready (default off)")

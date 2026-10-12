@@ -30,6 +30,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 - **Bleed-immune targets** are learned (three Rips without a debuff, or an "immune" line) and remembered across sessions; Rip and Rake are skipped on them.
 - **Debuff cap** - with Nampower, bleed ticks are read from the server log, so Rip and Rake are tracked even when the 16 visible debuff slots are full (OctoWoW allows 40).
 - **Dungeon bosses** - an elite with 25 000+ health counts as a boss outside raids (Berserk, Reshift mana). In raid zones only "??" counts.
+- **Idol swap** (`/fdps idol`, off by default) - the relic slot can be changed in combat without a global cooldown, so the press that finds the wrong idol on equips the right one from the bags and still fires its ability: Idol of Ferocity on anything that bleeds, Idol of the Moonfang (mana per Shred) on bleed-immune targets. Never from a timer or an event - only on a key press, like an `/equip` + `/cast` macro.
 
 ## Commands
 
@@ -42,6 +43,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps pot`, `/fdps juju` | Mighty Rage Potion / Juju Flurry on bosses, off the GCD |
 | `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>` |
 | `/fdps bosshp [n]` | What the current target is judged as; sets the dungeon-boss health threshold |
+| `/fdps idol` | Idol swap on the press (off by default); `idol bleed <name>`, `idol immune <name>` pick the two idols |
 | `/fdps enrage`, `enrageboss` | Bear: Enrage when rage-starved on trash / also on bosses |
 | `/fdps pull` | Allow acting on unpulled mobs while in combat (chain-pulling in bear) |
 | `/fdps chat <tab>` | Route all output (FeralTrack too) to a chat tab |
@@ -67,4 +69,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.20`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.22`).
