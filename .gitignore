@@ -1,0 +1,9 @@
+# WoW saved variables / backups never belong in the repo
+*.lua.bak
+WTF/
+SavedVariables/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+*.swp

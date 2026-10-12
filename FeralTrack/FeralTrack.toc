@@ -1,0 +1,9 @@
+## Interface: 11200
+## Title: FeralTrack
+## Notes: Uptime and leak report for FeralDPS - what ShaguDPS does not show
+## Author: Claude
+## Version: 1.7.5
+## OptionalDeps: FeralDPS
+## SavedVariables: FeralTrack_Settings
+
+FeralTrack.lua
