@@ -41,7 +41,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps rip`, `rake`, `claw`, `ff`, `tf` | Rip upkeep, Rake upkeep, Claw with both bleeds up, Faerie Fire, Tiger's Fury |
 | `/fdps berserk` | Auto-Berserk on bosses (`/fdps btrash` for trash too) |
 | `/fdps pot`, `/fdps juju` | Mighty Rage Potion / Juju Flurry on bosses, off the GCD |
-| `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>` |
+| `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>`, `farm <mana%>`, `farmnet <energy>` |
 | `/fdps bosshp [n]` | What the current target is judged as; sets the dungeon-boss health threshold |
 | `/fdps idol` | Idol swap on the press (off by default); `idol bleed <name>`, `idol immune <name>` pick the two idols |
 | `/fdps enrage`, `enrageboss` | Bear: Enrage when rage-starved on trash / also on bosses |
@@ -69,4 +69,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.23`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.26`).

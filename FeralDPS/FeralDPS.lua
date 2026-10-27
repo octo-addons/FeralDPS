@@ -70,6 +70,9 @@ local F_ = {
   reshiftEnergyManual = false,
   reshiftGain   = nil,    -- the energy a Reshift sets the bar to, measured (Nampower energize events)
   reshiftMinNet = 20,     -- a Reshift must be worth at least this much energy (gain - bar - TF recast)
+  farmMana      = 40,     -- /fdps farm: Reshift only while mana% is at least this (nothing to save it for but healing)
+  farmMinNet    = 10,     -- /fdps farm: a Reshift only has to be worth this much net (mana is free there, and below
+                          -- the cheapest ability the GCD it takes costs nothing either)
   bossHp        = 25000,  -- an elite with this much max health counts as a boss (dungeon bosses)
   -- Idol swap (1.15.22): Idol of Ferocity's -3 energy on Claw and Rake is
   -- worth nothing on a bleed-immune boss, where Shred is the only builder.
@@ -1340,7 +1343,8 @@ local function reshiftWhy(power)
   local gain   = F_.reshiftGain or 60
   local tfCost = (F_.useTigersFury and tfLeft > 3) and (F_.costs["Tiger's Fury"] or 30) or 0
   local net    = gain - power - tfCost
-  if net < F_.reshiftMinNet then
+  local minNet = (F_.lastSpec == "farm") and (F_.farmMinNet or 10) or F_.reshiftMinNet
+  if net < minNet then
     return string.format("worth only %d energy (pays %d, bar %d%s)", net, gain, power,
       tfCost > 0 and string.format(", TF recast %d with %.0fs left", tfCost, tfLeft) or "")
   end
@@ -1355,10 +1359,15 @@ local function reshiftWhy(power)
   if mana < F_.reshiftCost + F_.reshiftReserve then
     return string.format("mana %d, need %d (%d + %d reserve)", mana, F_.reshiftCost + F_.reshiftReserve, F_.reshiftCost, F_.reshiftReserve)
   end
-  -- Farming: a Reshift on every mob would drain the bar in a few pulls and
-  -- leave nothing for the one that matters. Only from a mostly full bar.
-  if F_.lastSpec == "farm" and maxMana and mana < 0.6 * maxMana then
-    return string.format("farm: mana %d of %d, kept for later", mana, maxMana)
+  -- Farming (1.15.24): there is no boss to save the mana for, only the odd
+  -- heal, so a Reshift goes out on every mob as long as farmMana% is left.
+  -- The raid-trash rule below does not apply here - it used to, which kept
+  -- farming at the 80% line.
+  if F_.lastSpec == "farm" then
+    if maxMana and mana < (F_.farmMana or 40) / 100 * maxMana then
+      return string.format("farm: mana %d of %d, under the %d%% floor", mana, maxMana, F_.farmMana or 40)
+    end
+    return nil
   end
   -- Raid trash: the mana is for the bosses. Trash gets Reshifts only while
   -- the bar is nearly full (there is no drinking in cat form between pulls).
@@ -1371,7 +1380,17 @@ end
 local function tryReshift(power)
   local why = reshiftWhy(power)
   if why then
-    if why ~= "off" and why ~= "energy above " .. F_.reshiftEnergy and not string.find(why, "^Tiger") and not string.find(why, "^worth") then trace("press", "no Reshift: " .. why) end
+    if string.find(why, "^worth") then
+      -- the figures change on every press, so this one is rate-limited
+      -- instead of folded (1.15.25: it used to be left out entirely, which
+      -- made a farm run with no Reshifts impossible to read from the trace)
+      if (GetTime() - (F_.lastWorthTrace or 0)) > 2 then
+        F_.lastWorthTrace = GetTime()
+        trace("press", "no Reshift: " .. why)
+      end
+    elseif why ~= "off" and why ~= "energy above " .. F_.reshiftEnergy and not string.find(why, "^Tiger") then
+      trace("press", "no Reshift: " .. why)
+    end
     return false
   end
   local now = GetTime()
@@ -1966,6 +1985,8 @@ saveSettings = function()
     reshiftGain   = F_.reshiftGain,
     reshiftReserve = F_.reshiftReserve,
     reshiftMinNet = F_.reshiftMinNet,
+    farmMana      = F_.farmMana,
+    farmMinNet    = F_.farmMinNet,
     bossHp        = F_.bossHp,
     idolSwap      = F_.idolSwap,
     idolBleed     = F_.idolBleed,
@@ -2104,6 +2125,8 @@ local function feralInit()
     if tonumber(FeralDPS_Settings.reshiftGain)    then F_.reshiftGain    = tonumber(FeralDPS_Settings.reshiftGain)    end
     if tonumber(FeralDPS_Settings.reshiftReserve) then F_.reshiftReserve = tonumber(FeralDPS_Settings.reshiftReserve) end
     if tonumber(FeralDPS_Settings.reshiftMinNet)  then F_.reshiftMinNet  = tonumber(FeralDPS_Settings.reshiftMinNet)  end
+    if tonumber(FeralDPS_Settings.farmMana)       then F_.farmMana       = tonumber(FeralDPS_Settings.farmMana)       end
+    if tonumber(FeralDPS_Settings.farmMinNet)     then F_.farmMinNet     = tonumber(FeralDPS_Settings.farmMinNet)     end
     if tonumber(FeralDPS_Settings.bossHp)         then F_.bossHp         = tonumber(FeralDPS_Settings.bossHp)         end
     if FeralDPS_Settings.idolSwap      ~= nil then F_.idolSwap      = FeralDPS_Settings.idolSwap      end
     if type(FeralDPS_Settings.idolBleed)  == "string" and FeralDPS_Settings.idolBleed  ~= "" then F_.idolBleed  = FeralDPS_Settings.idolBleed  end
@@ -2353,6 +2376,12 @@ function FeralDPS_OnLoad()
       elseif key == "cost" and num then
         F_.reshiftCost = num; saveSettings()
         announce("|cFFFFD700FeralDPS|r: Reshift counted as |cFFFFFFFF" .. num .. "|r mana per use.")
+      elseif key == "farm" and num then
+        F_.farmMana = num; saveSettings()
+        announce("|cFFFFD700FeralDPS|r: /fdps farm reshifts while mana is at least |cFFFFFFFF" .. num .. "%|r.")
+      elseif key == "farmnet" and num then
+        F_.farmMinNet = num; saveSettings()
+        announce("|cFFFFD700FeralDPS|r: /fdps farm reshifts when it is worth at least |cFFFFFFFF" .. num .. "|r energy net.")
       elseif (key == "net" or key == "minnet" or key == "worth") and num then
         F_.reshiftMinNet = num; saveSettings()
         announce("|cFFFFD700FeralDPS|r: Reshift only when it is worth at least |cFFFFFFFF" .. num .. "|r energy (what it pays, minus the bar, minus a Tiger's Fury recast if TF has over 3s left).")
@@ -2369,7 +2398,7 @@ function FeralDPS_OnLoad()
             .. ", and only when worth " .. F_.reshiftMinNet .. "+ energy net (a TF recast counts against it)")
         end
       else
-        out("|cFFFFD700FeralDPS|r: /fdps reshift  |  /fdps reshift energy 15  |  /fdps reshift reserve 700  |  /fdps reshift cost 348  |  /fdps reshift net 20")
+        out("|cFFFFD700FeralDPS|r: /fdps reshift  |  /fdps reshift energy 15  |  /fdps reshift reserve 700  |  /fdps reshift cost 348  |  /fdps reshift net 20  |  /fdps reshift farm 40  |  /fdps reshift farmnet 10")
       end
 
     elseif cmd == "trace" then
