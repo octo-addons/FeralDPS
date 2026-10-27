@@ -73,6 +73,7 @@ local F_ = {
   farmMana      = 40,     -- /fdps farm: Reshift only while mana% is at least this (nothing to save it for but healing)
   farmMinNet    = 10,     -- /fdps farm: a Reshift only has to be worth this much net (mana is free there, and below
                           -- the cheapest ability the GCD it takes costs nothing either)
+  manaIncomeRate = 300,   -- mana gained in 15s (Wisdom, Moonfang...) above which the Reshift reserve drops to 150
   bossHp        = 25000,  -- an elite with this much max health counts as a boss (dungeon bosses)
   -- Idol swap (1.15.22): Idol of Ferocity's -3 energy on Claw and Rake is
   -- worth nothing on a bleed-immune boss, where Shred is the only builder.
@@ -1319,6 +1320,17 @@ local function energyTickIn()
   return left
 end
 
+-- mana gained from procs/judgements in the last `window` seconds
+local function manaIncome(window)
+  local list = F_.manaIncome
+  if not list then return 0 end
+  local now, sum = GetTime(), 0
+  for i = 1, table.getn(list) do
+    if now - list[i].t <= window then sum = sum + list[i].n end
+  end
+  return sum
+end
+
 local function reshiftWhy(power)
   if not F_.useReshift then return "off" end
   if not (F_.book and F_.book["Reshift"]) then return "not in the spellbook" end
@@ -1356,8 +1368,16 @@ local function reshiftWhy(power)
   if not spellReady("Reshift") then return "on cooldown" end
   local mana, maxMana = playerMana()
   if not mana then return "mana unknown (no Nampower / DruidBar)" end
-  if mana < F_.reshiftCost + F_.reshiftReserve then
-    return string.format("mana %d, need %d (%d + %d reserve)", mana, F_.reshiftCost + F_.reshiftReserve, F_.reshiftCost, F_.reshiftReserve)
+  -- The reserve is for a Cat Form after a forced shift-out and a heal or
+  -- two. With Wisdom (or Moonfang) feeding mana back faster than Reshifts
+  -- spend it, the next one is already paid for, so the reserve shrinks to a
+  -- single shift's worth (1.15.27). manaIncomeRate is what counts as that.
+  local reserve = F_.reshiftReserve
+  local income = manaIncome(15)
+  if income >= (F_.manaIncomeRate or 300) then reserve = math.min(reserve, 150) end
+  if mana < F_.reshiftCost + reserve then
+    return string.format("mana %d, need %d (%d + %d reserve%s)", mana, F_.reshiftCost + reserve, F_.reshiftCost, reserve,
+      income > 0 and string.format(", income %d/15s", income) or "")
   end
   -- Farming (1.15.24): there is no boss to save the mana for, only the odd
   -- heal, so a Reshift goes out on every mob as long as farmMana% is left.
@@ -1987,6 +2007,7 @@ saveSettings = function()
     reshiftMinNet = F_.reshiftMinNet,
     farmMana      = F_.farmMana,
     farmMinNet    = F_.farmMinNet,
+    manaIncomeRate = F_.manaIncomeRate,
     bossHp        = F_.bossHp,
     idolSwap      = F_.idolSwap,
     idolBleed     = F_.idolBleed,
@@ -2127,6 +2148,7 @@ local function feralInit()
     if tonumber(FeralDPS_Settings.reshiftMinNet)  then F_.reshiftMinNet  = tonumber(FeralDPS_Settings.reshiftMinNet)  end
     if tonumber(FeralDPS_Settings.farmMana)       then F_.farmMana       = tonumber(FeralDPS_Settings.farmMana)       end
     if tonumber(FeralDPS_Settings.farmMinNet)     then F_.farmMinNet     = tonumber(FeralDPS_Settings.farmMinNet)     end
+    if tonumber(FeralDPS_Settings.manaIncomeRate) then F_.manaIncomeRate = tonumber(FeralDPS_Settings.manaIncomeRate) end
     if tonumber(FeralDPS_Settings.bossHp)         then F_.bossHp         = tonumber(FeralDPS_Settings.bossHp)         end
     if FeralDPS_Settings.idolSwap      ~= nil then F_.idolSwap      = FeralDPS_Settings.idolSwap      end
     if type(FeralDPS_Settings.idolBleed)  == "string" and FeralDPS_Settings.idolBleed  ~= "" then F_.idolBleed  = FeralDPS_Settings.idolBleed  end
@@ -2382,6 +2404,9 @@ function FeralDPS_OnLoad()
       elseif key == "farmnet" and num then
         F_.farmMinNet = num; saveSettings()
         announce("|cFFFFD700FeralDPS|r: /fdps farm reshifts when it is worth at least |cFFFFFFFF" .. num .. "|r energy net.")
+      elseif key == "income" and num then
+        F_.manaIncomeRate = num; saveSettings()
+        announce("|cFFFFD700FeralDPS|r: with |cFFFFFFFF" .. num .. "|r+ mana gained in 15s (Wisdom, Moonfang) the Reshift reserve drops to 150.")
       elseif (key == "net" or key == "minnet" or key == "worth") and num then
         F_.reshiftMinNet = num; saveSettings()
         announce("|cFFFFD700FeralDPS|r: Reshift only when it is worth at least |cFFFFFFFF" .. num .. "|r energy (what it pays, minus the bar, minus a Tiger's Fury recast if TF has over 3s left).")
@@ -2396,9 +2421,10 @@ function FeralDPS_OnLoad()
           if not mana then out("  |cFFFF8800Note:|r mana cannot be read while shifted without Nampower (or DruidBar) - Reshift stays off until it can.") end
           out("  sets the bar to " .. tostring(F_.reshiftGain or "? (measured on the first one)") .. " energy (what is in it is lost), used at or below " .. F_.reshiftEnergy
             .. ", and only when worth " .. F_.reshiftMinNet .. "+ energy net (a TF recast counts against it)")
+          out("  mana income last 15s: " .. manaIncome(15) .. " (at " .. (F_.manaIncomeRate or 300) .. "+ the reserve drops to 150 - Wisdom on the boss)")
         end
       else
-        out("|cFFFFD700FeralDPS|r: /fdps reshift  |  /fdps reshift energy 15  |  /fdps reshift reserve 700  |  /fdps reshift cost 348  |  /fdps reshift net 20  |  /fdps reshift farm 40  |  /fdps reshift farmnet 10")
+        out("|cFFFFD700FeralDPS|r: /fdps reshift  |  /fdps reshift energy 15  |  /fdps reshift reserve 700  |  /fdps reshift cost 348  |  /fdps reshift net 20  |  /fdps reshift farm 40  |  /fdps reshift farmnet 10  |  /fdps reshift income 300")
       end
 
     elseif cmd == "trace" then
@@ -2791,7 +2817,15 @@ function FeralDPS_OnLoad()
     np:SetScript("OnEvent", function()
       local now = GetTime()
       if event == "SPELL_ENERGIZE_ON_SELF" then
-        -- arg3 spellId, arg4 power type (3 = energy), arg5 amount, arg6 periodic
+        -- arg3 spellId, arg4 power type (3 = energy, 0 = mana), arg5 amount, arg6 periodic
+        -- 1.15.27: mana income (Judgement of Wisdom, Moonfang, Mana Spring...)
+        -- is remembered for 20s; with a paladin judging Wisdom on the boss it
+        -- is 40-50 mana a second, and the Reshift reserve is pointless then.
+        if arg4 == 0 and (tonumber(arg5) or 0) > 0 then
+          F_.manaIncome = F_.manaIncome or {}
+          table.insert(F_.manaIncome, { t = GetTime(), n = tonumber(arg5) })
+          while table.getn(F_.manaIncome) > 80 do table.remove(F_.manaIncome, 1) end
+        end
         -- Everything that lands in the 1.5s after a Reshift press is its
         -- payout (Furor 40, the head enchant 20 as a second energize); the
         -- 10 from Tiger's Fury and the 5 from a bleed tick are periodic and

@@ -24,7 +24,7 @@ Priority, first match fires: Ravage/Pounce from Prowl, Faerie Fire (Feral) when 
 The OctoWoW-specific parts, all read from the talent tree at login:
 
 - **Carnage 2/2** - a 5-point Bite refreshes Rip and Rake for certain, so Rip is cast once and kept alive by Bites. The two Rip/Rake timers are reset on every 5-point Bite.
-- **Reshift** (OctoWoW's one-press powershift) refills the energy bar when it runs dry. It is only pressed when it is worth at least 20 energy net: what it pays (measured from the bar on the first use - Furor's 40 plus a head enchant, if any) minus what is in the bar minus a Tiger's Fury recast if TF has more than 3 s left. Never without the mana for it, and mana is held back on raid trash.
+- **Reshift** (OctoWoW's one-press powershift) refills the energy bar when it runs dry. It is only pressed when it is worth at least 20 energy net: what it pays (measured from the bar on the first use - Furor's 40 plus a head enchant, if any) minus what is in the bar minus a Tiger's Fury recast if TF has more than 3 s left. Never without the mana for it, and mana is held back on raid trash. With Judgement of Wisdom (or Moonfang) feeding 300+ mana per 15 s, the mana reserve drops to a single shift's worth, since the next one is already paid for.
 - **Tiger's Fury** has no global cooldown on this server and is fired outside the GCD guard, so it goes out the moment it is wanted - including right after a Reshift.
 - **Rip duration** by combo points (10/12/14/16/18 s), the Idol of Savagery factor, Idol of Ferocity costs and Improved Shred / Ferocity costs are all resolved from the tree and the ranged slot.
 - **Bleed-immune targets** are learned (three Rips without a debuff, or an "immune" line) and remembered across sessions; Rip and Rake are skipped on them.
@@ -41,7 +41,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps rip`, `rake`, `claw`, `ff`, `tf` | Rip upkeep, Rake upkeep, Claw with both bleeds up, Faerie Fire, Tiger's Fury |
 | `/fdps berserk` | Auto-Berserk on bosses (`/fdps btrash` for trash too) |
 | `/fdps pot`, `/fdps juju` | Mighty Rage Potion / Juju Flurry on bosses, off the GCD |
-| `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>`, `farm <mana%>`, `farmnet <energy>` |
+| `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>`, `farm <mana%>`, `farmnet <energy>`, `income <mana>` |
 | `/fdps bosshp [n]` | What the current target is judged as; sets the dungeon-boss health threshold |
 | `/fdps idol` | Idol swap on the press (off by default); `idol bleed <name>`, `idol immune <name>` pick the two idols |
 | `/fdps enrage`, `enrageboss` | Bear: Enrage when rage-starved on trash / also on bosses |
@@ -69,4 +69,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.26`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.27`).
