@@ -69,4 +69,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.22`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.23`).

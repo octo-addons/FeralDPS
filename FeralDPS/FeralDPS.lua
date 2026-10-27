@@ -1948,7 +1948,7 @@ end
 -- ============================================================
 saveSettings = function()
   FeralDPS_Settings = {
-    version       = 10,
+    version       = 11,
     spec          = F_.spec,
     useRip        = F_.useRip,
     useRake       = F_.useRake,
@@ -2203,6 +2203,15 @@ local function feralInit()
     -- enchant's +20 passed for a regen tick and was taken off. Once more.
     if (FeralDPS_Settings.version or 1) < 10 then
       F_.reshiftGain = nil
+    end
+    -- Version 11 (1.15.23): a bar sample read right after the Tiger's Fury or
+    -- Bite that followed the Reshift was saved as the gain (25 in ZG 24/10),
+    -- and with that figure the net rule hardly ever let a Reshift through.
+    -- Anything under Furor's 40 is a bad sample now, and the saved value is
+    -- measured again.
+    if (FeralDPS_Settings.version or 1) < 11 then
+      if F_.reshiftGain and F_.reshiftGain < 40 then F_.reshiftGain = nil end
+      F_.reshiftGains = nil
     end
   end
 
@@ -3031,14 +3040,30 @@ function FeralDPS_OnLoad()
         local d = w.exact or 0
         local source = "exact"
         if fromBar > d then d = fromBar; source = tickLanded and "bar, regen tick taken off" or "bar" end
-        if d >= 25 then
+        if d >= 40 then
+          -- 1.15.23: a Reshift pays at least Furor's 40 on this server, so a
+          -- lower bar reading means the sample caught the bar after the next
+          -- ability had already spent from it - it is not a gain. Valid
+          -- samples go into a five-deep list and the median is kept, so one
+          -- odd reading moves nothing (the comment above promised that; the
+          -- code only kept the latest sample until now).
           F_.reshiftNoGain = 0
           d = math.floor(d / 5 + 0.5) * 5
-          if F_.reshiftGain ~= d then
-            F_.reshiftGain = d
+          F_.reshiftGains = F_.reshiftGains or {}
+          table.insert(F_.reshiftGains, d)
+          while table.getn(F_.reshiftGains) > 5 do table.remove(F_.reshiftGains, 1) end
+          local sorted = {}
+          for i = 1, table.getn(F_.reshiftGains) do sorted[i] = F_.reshiftGains[i] end
+          table.sort(sorted)
+          local med = sorted[math.floor((table.getn(sorted) + 1) / 2)]
+          if F_.reshiftGain ~= med then
+            F_.reshiftGain = med
             saveSettings()
           end
-          trace("np", "Reshift set the bar to " .. d .. " energy (" .. w.before .. " thrown away) (" .. source .. ")")
+          trace("np", "Reshift set the bar to " .. d .. " energy (" .. w.before .. " thrown away) (" .. source .. ") -> gain " .. med)
+        elseif d >= 25 then
+          F_.reshiftNoGain = 0
+          trace("np", "Reshift bar sample " .. d .. " - read after a spend, ignored (" .. source .. ")")
         else
           F_.reshiftNoGain = (F_.reshiftNoGain or 0) + 1
           trace("np", "Reshift paid no energy (" .. F_.reshiftNoGain .. ")")
@@ -3186,6 +3211,11 @@ function FeralDPS_OnLoad()
       F_.energyTickAt = GetTime()
       F_.energyTickSize = d
     end
+    -- 1.15.23: the Reshift measurement takes its peak from here, on the
+    -- event, not from a 10 Hz sampler that could miss the 60 between the
+    -- shift and the Tiger's Fury pressed 50ms later (and then read 30).
+    local w = F_.reshiftWatch
+    if w and e > w.peak then w.peak = e; w.peakAt = GetTime() end
   end)
 
   local loader = CreateFrame("Frame", "FeralDPSLoader")
