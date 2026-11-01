@@ -271,6 +271,46 @@ local function isPlayerBuff(texturePart)
   return false
 end
 
+-- Buff by NAME, read from a hidden tooltip (1.12 has no name API for buffs).
+-- Used for Vaelastrasz's Essence of the Red (1.15.28), whose icon is shared
+-- with other things. Cached for a second; the tooltip frame is only made
+-- when first needed.
+local buffTip
+local function playerBuffName(id)
+  if not buffTip then
+    buffTip = CreateFrame("GameTooltip", "FeralDPSBuffTip", UIParent, "GameTooltipTemplate")
+  end
+  if not buffTip or not buffTip.SetPlayerBuff then return nil end
+  buffTip:SetOwner(UIParent, "ANCHOR_NONE")
+  buffTip:ClearLines()
+  buffTip:SetPlayerBuff(id)
+  local fs = getglobal("FeralDPSBuffTipTextLeft1")
+  return fs and fs:GetText() or nil
+end
+
+local function hasPlayerBuffNamed(name)
+  F_.buffNameCache = F_.buffNameCache or {}
+  local c = F_.buffNameCache[name]
+  if c and (GetTime() - c.at) < 1.0 then return c.has end
+  local has = false
+  local i = 0
+  while not (GetPlayerBuff(i) == -1) do
+    if playerBuffName(GetPlayerBuff(i)) == name then has = true; break end
+    i = i + 1
+  end
+  F_.buffNameCache[name] = { at = GetTime(), has = has }
+  return has
+end
+
+-- Vaelastrasz: Essence of the Red pays 20 energy (and 500 mana) a second for
+-- the whole fight. A Reshift then trades a 1.5s GCD for 60 energy the bar
+-- would have had in two seconds anyway, and knocks Tiger's Fury off - not
+-- worth it. Berserk's extra regen is worth little there too, and the 5-minute
+-- cooldown is better spent on Broodlord. Both are skipped while it is up.
+local function essenceOfRed()
+  return hasPlayerBuffNamed("Essence of the Red")
+end
+
 local function isTargetDebuff(texturePart)
   if not UnitExists("target") then return false end
   local part = string.lower(texturePart)
@@ -760,6 +800,15 @@ end
 -- Cast and record the timer. SPELL_GO_SELF refines it when Nampower is present.
 local function castAndTrack(spell, cp)
   local now = GetTime()
+  -- 1.15.29: a builder cast at 5 CP is the "spend-down" Claw before a Bite.
+  -- Remembered so the Bite follows on the next press whatever the bar says:
+  -- under Vaelastrasz's Essence of the Red the bar was back at 80+ before
+  -- the Bite came up, so the rule chose a Claw again - 27 Claws, 3 Bites.
+  if (cp or 0) >= 5 and (spell == "Claw" or spell == "Shred" or spell == "Rake") then
+    F_.spendDownAt = now
+  elseif spell == "Ferocious Bite" or spell == "Rip" then
+    F_.spendDownAt = nil
+  end
   if spell == "Rip" then
     -- Fallback immunity detection: Rips on the same target that keep going
     -- out without a debuff ever showing up mean it is not going to.
@@ -1103,6 +1152,7 @@ local function nextSpell_Cat(opts)
      and (F_.berserkTrash
           or (isBoss() and (getRipRemaining() > 0 or isImmune("Rip") or npBlocked("Rip"))))
      and (not F_.useTigersFury or isPlayerBuff(F_.texTF))
+     and not essenceOfRed()
      and spellReady("Berserk") then
     return "Berserk"
   end
@@ -1141,6 +1191,12 @@ local function nextSpell_Cat(opts)
     local spendDown = opts.power >= (F_.costs["Ferocious Bite"] + F_.costs["Claw"] + 5)
       and ripLeft > 5
       and (isBoss() or not ttd or ttd >= 8)
+      -- one spend-down builder per Bite, never a chain of them (1.15.29); and
+      -- none at all when energy is not the limit: a capped bar or Essence of
+      -- the Red, where the Bite's damage per GCD is what counts
+      and not (F_.spendDownAt and (GetTime() - F_.spendDownAt) < 4)
+      and opts.power < 90
+      and not essenceOfRed()
     if not spendDown then
       return "Ferocious Bite"
     end
@@ -1198,6 +1254,7 @@ local function nextSpell_Farm(opts)
   if F_.useBerserk and opts.power < 30
      and UnitAffectingCombat("player")
      and (not F_.useTigersFury or isPlayerBuff(F_.texTF))
+     and not essenceOfRed()
      and spellReady("Berserk") then
     return "Berserk"
   end
@@ -1338,6 +1395,7 @@ local function reshiftWhy(power)
   -- not a talent called Furor shows up in the tree (René gets 60 with the
   -- head enchant, with "Furor 0/5" by name). The first Reshift measures it.
   if F_.reshiftNoGain and F_.reshiftNoGain >= 2 then return "paid no energy twice this fight - tried again next fight" end
+  if essenceOfRed() then return "Essence of the Red: energy is free, the GCD is not" end
   if power > F_.reshiftEnergy then return "energy above " .. F_.reshiftEnergy end
   if isClearcasting() then return "Clearcasting up" end
   -- What the Reshift is actually worth, in energy (1.15.17). It empties the
@@ -1400,7 +1458,7 @@ end
 local function tryReshift(power)
   local why = reshiftWhy(power)
   if why then
-    if string.find(why, "^worth") then
+    if string.find(why, "^worth") or string.find(why, "^Essence") then
       -- the figures change on every press, so this one is rate-limited
       -- instead of folded (1.15.25: it used to be left out entirely, which
       -- made a farm run with no Reshifts impossible to read from the trace)

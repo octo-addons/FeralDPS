@@ -29,6 +29,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 - **Rip duration** by combo points (10/12/14/16/18 s), the Idol of Savagery factor, Idol of Ferocity costs and Improved Shred / Ferocity costs are all resolved from the tree and the ranged slot.
 - **Bleed-immune targets** are learned (three Rips without a debuff, or an "immune" line) and remembered across sessions; Rip and Rake are skipped on them.
 - **Debuff cap** - with Nampower, bleed ticks are read from the server log, so Rip and Rake are tracked even when the 16 visible debuff slots are full (OctoWoW allows 40).
+- **Vaelastrasz** - while Essence of the Red is up (20 energy a second for the whole fight) Reshift and Berserk are skipped: the energy is free, the GCD and the 5-minute cooldown are not.
 - **Dungeon bosses** - an elite with 25 000+ health counts as a boss outside raids (Berserk, Reshift mana). In raid zones only "??" counts.
 - **Idol swap** (`/fdps idol`, off by default) - the relic slot can be changed in combat without a global cooldown, so the press that finds the wrong idol on equips the right one from the bags and still fires its ability: Idol of Ferocity on anything that bleeds, Idol of the Moonfang (mana per Shred) on bleed-immune targets. Never from a timer or an event - only on a key press, like an `/equip` + `/cast` macro.
 
@@ -69,4 +70,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.27`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.15.29`).
