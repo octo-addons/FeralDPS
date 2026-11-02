@@ -25,6 +25,7 @@
 --   /fdps berserk  - auto-Berserk when the window is right (default on)
 --   /fdps pull     - allow acting on unpulled mobs while in combat (default off)
 --   /fdps btrash   - Berserk on cooldown, no Rip requirement (default off)
+--   /fdps step     - cat: out-of-range press -> one short step forward (default off)
 --   /fdps farm     - cat, short fights: no FF/Rip, early Bites, Rake for Claw
 --   /fdps enrage   - bear: Enrage when rage-starved on trash (default on)
 --   /fdps enrageboss - bear: Enrage on bosses too (default off)
@@ -57,6 +58,14 @@ local F_ = {
   useBerserk    = true,
   allowPull     = false,  -- act on out-of-combat targets while already fighting
   berserkTrash  = false,  -- Berserk without waiting for Rip (use it on cooldown)
+  useStep       = false,  -- 1.15.31 /fdps step: a press refused as "out of range" while
+                          -- standing just behind melee reach takes one short step forward
+  stepAt        = 0,      -- time of the last step
+  stepStopAt    = nil,    -- when the running step stops
+  stepBadUntil  = 0,      -- steps paused (a step did not bring us closer)
+  meleeAt       = 0,      -- last time a melee hit/miss on the target was logged
+  meleeDist     = nil,    -- UnitXP distance to the target at that moment
+  meleeTarget   = nil,
   chatWindow    = nil,    -- name of the chat tab for addon output (nil = general)
   powershift    = false,  -- old DruidBar powershift (superseded by Reshift)
   -- Reshift: OctoWoW's one-press powershift (level 60 skill). Furor hands 40
@@ -104,7 +113,7 @@ local F_ = {
   natShifterRank = 0,   -- reduces shapeshift mana cost (powershift estimate)
   furorRank      = 0,   -- 5/5 = 40 energy on shifting into cat (what Reshift pays out)
   bloodFrenzyRank = 0,  -- extends Tiger's Fury by 6s per rank
-  carnageRank    = 0,   -- 20% per CP per rank: at 2/2 a 5-CP Bite ALWAYS refreshes Rip+Rake
+  carnageRank    = 0,   -- 10% per CP per rank: at 2/2 a 5-CP Bite ALWAYS refreshes Rip+Rake
 
   -- Idol of Ferocity in the ranged slot: -3 energy on Claw / Rake
   idolReduction = 0,
@@ -151,7 +160,11 @@ local F_ = {
   lastRipTickTime  = 0,   -- last "suffers ... from your Rip" seen (raid debuff cap)
   lastRakeTickTime = 0,
   ripTickCount  = 9,
-  carnageRefreshes = 0,   -- Rip tick-count wraps seen this session
+  carnageRefreshes = 0,   -- Carnage refreshes PROVEN this session (1.15.30): Rip still
+                          -- ticking after the time it would have run out on its own
+  ripNaturalEnd    = 0,   -- when the Rip on the target would expire without Carnage
+  carnagePendingAt = nil, -- time of the last 5-CP Bite that should have refreshed it
+  biteUndo         = nil, -- timers as they were before that Bite (restored on a miss)
   rakeTickCount = 3,
   lastCastTime = 0,
   hudPos = nil,           -- saved HUD screen position { left=, bottom= }
@@ -833,12 +846,23 @@ local function castAndTrack(spell, cp)
     F_.lastRipTime, F_.lastRipCP = now, cp
     setRipDuration(cp)
     F_.ripTicks = 0
+    F_.ripNaturalEnd, F_.carnagePendingAt, F_.biteUndo = now + F_.ripDur, nil, nil
   elseif spell == "Ferocious Bite" then
-    -- Carnage: 20% per combo point per rank to refresh Rake and Rip. When that
-    -- reaches 100% the refresh is a certainty and the timers can be reset here
-    -- instead of waiting for the combat log to notice an extra tick.
+    -- Carnage: 10% per combo point per rank to refresh Rake and Rip. When that
+    -- reaches 100% (2/2 at 5 CP) the refresh is a certainty and the timers can
+    -- be reset here instead of waiting for the combat log to notice an extra tick.
+    -- 1.15.30: only a Bite that LANDS refreshes anything. The timers as they
+    -- were are kept for a moment, and a dodged/parried/missed Bite or one the
+    -- client refused puts them back (undoCarnage) - before, such a Bite left
+    -- Rip counted as freshly refreshed while it ran out unseen in a full raid
+    -- debuff bar.
+    F_.lastBiteTime = now
     if (F_.carnageRank * 0.1 * cp) >= 0.999 then
-      if F_.lastRipTime  > 0 then F_.lastRipTime  = now; F_.ripTicks  = 0 end
+      F_.biteUndo = { t = now, target = UnitName("target"),
+        rip = F_.lastRipTime, ripTicks = F_.ripTicks,
+        rake = F_.lastRakeTime, rakeTicks = F_.rakeTicks,
+        pending = F_.carnagePendingAt }
+      if F_.lastRipTime  > 0 then F_.lastRipTime  = now; F_.ripTicks  = 0; F_.carnagePendingAt = now end
       if F_.lastRakeTime > 0 then F_.lastRakeTime = now; F_.rakeTicks = 0 end
     end
   elseif spell == "Rake" then
@@ -857,6 +881,96 @@ local function castAndTrack(spell, cp)
     F_.debuffTarget = UnitName("target")
   end
   castSpell(spell)
+end
+
+-- 1.15.30: a Ferocious Bite that did not land (dodged, parried, missed, or
+-- refused by the client) refreshed nothing. Put the Rip/Rake timers back to
+-- what they were before the press. Only within a few seconds of the Bite and
+-- on the same target - anything later is a different situation.
+local function undoCarnage(why)
+  local u = F_.biteUndo
+  if not u then return end
+  F_.biteUndo = nil
+  if (GetTime() - u.t) > 3 or u.target ~= UnitName("target") then return end
+  F_.lastRipTime, F_.ripTicks   = u.rip,  u.ripTicks
+  F_.lastRakeTime, F_.rakeTicks = u.rake, u.rakeTicks
+  F_.carnagePendingAt = u.pending
+  trace("carnage", "Bite " .. tostring(why) .. ": no Carnage refresh, Rip/Rake timers restored")
+end
+
+-- ============================================================
+-- STEP FORWARD (1.15.31, /fdps step, default off)
+-- A press that the client refuses with "Out of range." while you stand a
+-- yard or two behind the spot you were just hitting from takes ONE short
+-- step forward (0.3s of walking, about 2 yards in cat). It only happens on
+-- your own press, never on its own, and only when ALL of these hold:
+--   * in combat, cat, UnitXP loaded, no step in the last 1.5s
+--   * your auto attacks hit (or missed) this same target in the last 6s -
+--     you were in melee a moment ago, so you are facing it
+--   * UnitXP says you are behind it (never walks you into cleave/breath)
+--   * you are at most 3 yards further away than when you last hit it -
+--     anything further is taken as deliberate (fire, LOS, a kite phase)
+-- A step that does not bring you closer pauses stepping for 10s.
+-- ============================================================
+local function distToTarget()
+  if type(UnitXP) ~= "function" then return nil end
+  local ok, d = pcall(UnitXP, "distanceBetween", "player", "target")
+  if ok and type(d) == "number" then return d end
+  return nil
+end
+
+local function stopStep(why)
+  if not F_.stepStopAt then return end
+  F_.stepStopAt = nil
+  if type(MoveForwardStop) == "function" then MoveForwardStop() end
+  local d = distToTarget()
+  if F_.stepFrom and d and d > F_.stepFrom - 0.5 and UnitName("target") == F_.stepTarget then
+    F_.stepBadUntil = GetTime() + 10
+    trace("step", string.format("step did not bring us closer (%.1f -> %.1f yd): steps paused 10s", F_.stepFrom, d))
+  elseif why then
+    trace("step", "step stopped: " .. why)
+  end
+end
+
+local function tryStep(why)
+  if not F_.useStep or F_.stepStopAt then return end
+  if type(MoveForwardStart) ~= "function" or type(MoveForwardStop) ~= "function" then return end
+  if type(UnitXP) ~= "function" then return end
+  local now = GetTime()
+  if (now - F_.stepAt) < 1.5 or now < F_.stepBadUntil then return end
+  if not UnitAffectingCombat("player") then return end
+  local name = UnitName("target")
+  if not name or name ~= F_.meleeTarget or (now - F_.meleeAt) > 6 or not F_.meleeDist then
+    trace("step", "no step: not in melee with this target a moment ago")
+    return
+  end
+  local okB, behind = pcall(UnitXP, "behind", "player", "target")
+  if not (okB and behind) then
+    trace("step", "no step: not behind the target")
+    return
+  end
+  local d = distToTarget()
+  if not d then return end
+  local extra = d - F_.meleeDist
+  if extra > 3 then
+    trace("step", string.format("no step: %.1f yd further back than in melee (max 3)", extra))
+    return
+  end
+  F_.stepAt, F_.stepFrom, F_.stepTarget, F_.stepStopAt = now, d, name, now + 0.3
+  MoveForwardStart()
+  trace("step", string.format("step forward (%s; %.1f yd beyond the melee spot)", tostring(why), extra))
+end
+
+do
+  local stepFrame = CreateFrame("Frame", "FeralDPSStepFrame")
+  stepFrame:SetScript("OnUpdate", function()
+    if not F_.stepStopAt then return end
+    if not UnitExists("target") or UnitIsDead("target") or UnitName("target") ~= F_.stepTarget then
+      stopStep("target changed or died")
+    elseif GetTime() >= F_.stepStopAt then
+      stopStep()
+    end
+  end)
 end
 
 -- ============================================================
@@ -2055,6 +2169,7 @@ saveSettings = function()
     useBerserk    = F_.useBerserk,
     allowPull     = F_.allowPull,
     berserkTrash  = F_.berserkTrash,
+    useStep       = F_.useStep,
     chatWindow    = F_.chatWindow,
     powershift    = F_.powershift,
     useReshift    = F_.useReshift,
@@ -2196,6 +2311,7 @@ local function feralInit()
     if FeralDPS_Settings.useBerserk    ~= nil then F_.useBerserk    = FeralDPS_Settings.useBerserk    end
     if FeralDPS_Settings.allowPull     ~= nil then F_.allowPull     = FeralDPS_Settings.allowPull     end
     if FeralDPS_Settings.berserkTrash  ~= nil then F_.berserkTrash  = FeralDPS_Settings.berserkTrash  end
+    if FeralDPS_Settings.useStep       ~= nil then F_.useStep       = FeralDPS_Settings.useStep       end
     if FeralDPS_Settings.chatWindow    ~= nil then F_.chatWindow    = FeralDPS_Settings.chatWindow    end
     if FeralDPS_Settings.powershift    ~= nil then F_.powershift    = FeralDPS_Settings.powershift    end
     if FeralDPS_Settings.useReshift    ~= nil then F_.useReshift    = FeralDPS_Settings.useReshift    end
@@ -2422,6 +2538,7 @@ function FeralDPS_OnLoad()
     elseif cmd == "claw"  then toggle("clawBleeds",    "Claw while both bleeds are up")
     elseif cmd == "berserk" then toggle("useBerserk",  "Auto-Berserk on bosses (energy low, Rip up, Tiger's Fury up; /fdps btrash for trash too)")
     elseif cmd == "pull"  then toggle("allowPull",     "Acting on out-of-combat targets mid-fight (chain pull)")
+    elseif cmd == "step"  then toggle("useStep",       "Cat: step forward on an out-of-range press when just behind melee reach (max 3 yd)")
     elseif cmd == "btrash" then toggle("berserkTrash", "Berserk on trash too (on cooldown whenever the energy dips; off = bosses only)")
     elseif cmd == "enrage" then toggle("useEnrage",    "Bear: Enrage when rage-starved (trash)")
     elseif cmd == "pot"    then F_.potWarned = false; toggle("useRagePot", "Boss: Mighty Rage Potion (before the first Rip, then Shred bursts; bear: when rage is short)")
@@ -2632,7 +2749,9 @@ function FeralDPS_OnLoad()
           .. "   target=" .. tostring(UnitName("target")))
       end
       out("  Behind target: " .. tostring(isBehindTarget())
-        .. "   ClawBleeds: " .. tostring(F_.clawBleeds))
+        .. "   ClawBleeds: " .. tostring(F_.clawBleeds)
+        .. "   Step: " .. tostring(F_.useStep)
+        .. (F_.meleeDist and string.format(" (melee spot %.1f yd, %.0fs ago)", F_.meleeDist, GetTime() - F_.meleeAt) or ""))
       local imm = ""
       for n, t in pairs(F_.immune) do
         for sp, _ in pairs(t) do imm = imm .. n .. ":" .. sp .. "  " end
@@ -2732,6 +2851,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps claw|r   — Claw instead of Shred while Rake+Rip are up")
       out("  |cFFFFFFFF/fdps berserk|r— auto-Berserk (off = save it for Fear)")
       out("  |cFFFFFFFF/fdps pull|r   — allow acting on unpulled mobs mid-fight (default off)")
+      out("  |cFFFFFFFF/fdps step|r   — cat: a press refused as out of range takes ONE short step forward, only when you were in melee a moment ago and are at most 3 yd further back (default off)")
       out("  |cFFFFFFFF/fdps btrash|r — Berserk on cooldown instead of waiting for Rip (default off)")
       out("  |cFFFFFFFF/fdps idol|r   — swap idols on the press: bleed idol normally, Moonfang on bleed-immune targets (default off); idol bleed|immune <name>")
       out("  |cFFFFFFFF/fdps enrage|r — bear: Enrage for rage when starved, trash only (default on)")
@@ -2757,10 +2877,23 @@ function FeralDPS_OnLoad()
     if spell == "Rip" then
       F_.lastRipTickTime = now
       if F_.lastRipTime == 0 then F_.lastRipTime = now; setRipDuration(5) end  -- ticking but unseen
+      if F_.ripNaturalEnd == 0 then F_.ripNaturalEnd = now + F_.ripDur end
       F_.ripTicks = F_.ripTicks + 1
-      if F_.ripTicks > F_.ripTickCount then                        -- 7th tick = Carnage refresh
-        F_.ripTicks = 1
-        F_.carnageRefreshes = F_.carnageRefreshes + 1
+      if F_.ripTicks > F_.ripTickCount then F_.ripTicks = 1 end
+      -- 1.15.30: proof of Carnage. A Rip tick after the moment that Rip would
+      -- have run out on its own can only be there because a Bite refreshed it.
+      -- (The old count waited for a tick number past the Rip's tick count -
+      -- but every Bite reset that count, so it could never get there and the
+      -- FeralTrack line read 0 in every run.)
+      if F_.ripNaturalEnd > 0 and now > F_.ripNaturalEnd + 0.8 then
+        if F_.carnagePendingAt and F_.carnagePendingAt < F_.ripNaturalEnd then
+          F_.carnageRefreshes = F_.carnageRefreshes + 1
+          F_.ripNaturalEnd = F_.carnagePendingAt + F_.ripDur
+          F_.carnagePendingAt = nil
+          trace("carnage", "Rip still ticking past its own end: Carnage refresh #" .. F_.carnageRefreshes)
+        else
+          F_.ripNaturalEnd = now + F_.ripDur   -- re-applied in a way we did not see: start over
+        end
       end
       F_.lastRipTime = now - F_.ripTicks * (F_.ripTick * F_.relicFactor)
       F_.ticksSeen = (F_.ticksSeen or 0) + 1
@@ -2788,12 +2921,24 @@ function FeralDPS_OnLoad()
   log:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_DAMAGE")
   log:RegisterEvent("CHAT_MSG_SPELL_AURA_GONE_OTHER")
   log:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+  log:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")     -- 1.15.31: where melee reach is (/fdps step)
+  log:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
   log:SetScript("OnEvent", function()
     local msg = arg1
     if not msg then return end
     local tname = UnitName("target")
     if not tname then return end
     local now = GetTime()
+
+    -- An auto attack that hit or missed the target means we were in melee
+    -- reach right now: remember how far UnitXP measured that to be.
+    if event == "CHAT_MSG_COMBAT_SELF_HITS" or event == "CHAT_MSG_COMBAT_SELF_MISSES" then
+      if string.find(msg, tname, 1, true) and not F_.stepStopAt then
+        local d = distToTarget()
+        if d then F_.meleeAt, F_.meleeDist, F_.meleeTarget = now, d, tname end
+      end
+      return
+    end
 
     -- "Your Rip failed. Chromaggus is immune."
     local _, _, spellI, whoI = string.find(msg, "^Your (.-) failed%. (.-) is immune%.$")
@@ -2816,6 +2961,12 @@ function FeralDPS_OnLoad()
     local _, _, spellM, howM, whoM = string.find(msg, "^Your (.-) was (%a+) by (.-)%.$")
     if not spellM then _, _, spellM, whoM = string.find(msg, "^Your (.-) missed (.-)%.$") end
     if spellM and whoM == tname then trace("log", msg) end
+    -- 1.15.30: a Bite that never landed refreshed nothing (a blocked Bite
+    -- still hits, so "blocked" is left alone)
+    if spellM == "Ferocious Bite" and whoM == tname and (howM == nil or howM ~= "blocked") then
+      undoCarnage(howM or "missed")
+      return
+    end
     if spellM and whoM == tname and timerKey[spellM] then
       F_[timerKey[spellM]] = 0
       if spellM == "Rip" then F_.ripTicks = 0; F_.ripAttemptVoid = true   -- a dodged Rip says nothing about immunity
@@ -2827,7 +2978,7 @@ function FeralDPS_OnLoad()
     local _, _, spell, who = string.find(msg, "^(.-) fades from (.-)%.$")
     if spell and who == tname and timerKey[spell] then
       F_[timerKey[spell]] = 0
-      if spell == "Rip" then F_.ripTicks = 0 elseif spell == "Rake" then F_.rakeTicks = 0 end
+      if spell == "Rip" then F_.ripTicks = 0; F_.ripNaturalEnd = 0; F_.carnagePendingAt = nil elseif spell == "Rake" then F_.rakeTicks = 0 end
       return
     end
 
@@ -2919,7 +3070,7 @@ function FeralDPS_OnLoad()
           F_.np.landed = F_.np.landed + 1
           if timer and (g == targetGuid() or c.guid == nil) then
             F_[timer] = now
-            if name == "Rip" then F_.ripTicks = 0 elseif name == "Rake" then F_.rakeTicks = 0 end
+            if name == "Rip" then F_.ripTicks = 0; F_.ripNaturalEnd = now + F_.ripDur; F_.carnagePendingAt = nil elseif name == "Rake" then F_.rakeTicks = 0 end
           end
           F_.np.block[name] = nil
           trace("np", name .. " landed (slot " .. tostring(arg6) .. ")")
@@ -2931,7 +3082,7 @@ function FeralDPS_OnLoad()
           local ours = (F_.np.goAt and F_.np.goAt[name] and (now - F_.np.goAt[name]) < 2.5)
           if ours or (name ~= "Rip" and name ~= "Rake") then
             F_[timer] = now                        -- a manual cast, or someone else's FF
-            if name == "Rip" then F_.ripTicks = 0; setRipDuration(5) elseif name == "Rake" then F_.rakeTicks = 0 end
+            if name == "Rip" then F_.ripTicks = 0; setRipDuration(5); F_.ripNaturalEnd = now + F_.ripDur; F_.carnagePendingAt = nil elseif name == "Rake" then F_.rakeTicks = 0 end
           end
         end
       elseif event == "DEBUFF_REMOVED_OTHER" then
@@ -2940,7 +3091,7 @@ function FeralDPS_OnLoad()
         local timer = NP_TIMER[name]
         if timer and normGuid(arg1) == targetGuid() and not npAuraOnTarget(name) then
           F_[timer] = 0
-          if name == "Rip" then F_.ripTicks = 0 elseif name == "Rake" then F_.rakeTicks = 0 end
+          if name == "Rip" then F_.ripTicks = 0; F_.ripNaturalEnd = 0; F_.carnagePendingAt = nil elseif name == "Rake" then F_.rakeTicks = 0 end
           trace("np", name .. " removed from the target")
         end
       elseif event == "SPELL_DAMAGE_EVENT_SELF" then
@@ -3001,7 +3152,7 @@ function FeralDPS_OnLoad()
       return t and (now - t) < 2.5
     end
     if F_.lastRipTime  == 0 and debuffSeen("Rip", F_.texRip) and oursRecently("Rip") then
-      F_.lastRipTime = now; F_.ripTicks = 0; setRipDuration(5)
+      F_.lastRipTime = now; F_.ripTicks = 0; setRipDuration(5); F_.ripNaturalEnd = now + F_.ripDur; F_.carnagePendingAt = nil
     end
     if F_.lastRakeTime == 0 and debuffSeen("Rake", F_.texRake) and oursRecently("Rake") then F_.lastRakeTime = now end
     if F_.lastFFTime   == 0 and debuffSeen("Faerie Fire (Feral)", F_.texFF)   then F_.lastFFTime   = now end
@@ -3200,6 +3351,8 @@ function FeralDPS_OnLoad()
   local tgt = CreateFrame("Frame", "FeralDPSTargetFrame")
   tgt:RegisterEvent("PLAYER_TARGET_CHANGED")
   tgt:SetScript("OnEvent", function()
+    -- Carnage proof is only followed on one target at a time (1.15.30)
+    F_.ripNaturalEnd, F_.carnagePendingAt, F_.biteUndo = 0, nil, nil
     -- Back on the mob the debuffs were cast on, with a full (raid) debuff
     -- bar: nothing can be read, so the timers stand. Anything else: the
     -- debuff decides.
@@ -3286,10 +3439,15 @@ function FeralDPS_OnLoad()
               trace("target", string.format("%s is %.0f yd away: switched to %s", tostring(far), dist, tostring(UnitName("target"))))
             end
           end
+          -- 1.15.31 /fdps step: still on the same target in cat -> maybe one
+          -- short step forward (all the safety checks are in tryStep)
+          if isCatSpec(F_.lastSpec) and UnitName("target") == far then tryStep(msg) end
         end
         -- a Rip/Rake/FF that never went out must not sit on the HUD as "up"
         if attempt == "Rip" then F_.lastRipTime = 0; F_.ripAttemptVoid = true   -- and says nothing about immunity
         elseif attempt == "Rake" then F_.lastRakeTime = 0
+        elseif attempt == "Ferocious Bite" and since < 0.35 then   -- 1.15.30; tighter window, so a
+          undoCarnage("refused (" .. msg .. ")")                   -- swing error after a good Bite is not taken for it
         elseif attempt == "Faerie Fire (Feral)" then F_.lastFFTime = 0
         elseif attempt == "Tiger's Fury" then F_.lastTFTime = 0
         elseif attempt == "Demoralizing Roar" then F_.lastDemoTime = 0
