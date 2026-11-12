@@ -19,7 +19,7 @@ Bear (`/fdps bear`) and bear AoE (`/fdps aoe`) go on their own keys. `/fdps farm
 
 ## What the cat rotation does
 
-Priority, first match fires: Ravage/Pounce from Prowl, Faerie Fire (Feral) when missing, Tiger's Fury when down, Berserk on a boss with Rip up and the bar empty, then at 5 combo points Rip when none is on the target - otherwise Ferocious Bite - then Rake if it is down, then Claw while both bleeds are up (or when fronting) and Shred from behind.
+Priority, first match fires: Ravage/Pounce from Prowl, Faerie Fire (Feral) when missing, Tiger's Fury when down, Berserk on a boss with Rip up and the bar empty, then at 5 combo points Rip when none is on the target - otherwise Ferocious Bite - then Rake if it is down, then Shred from behind and Claw when fronting. `/fdps claw` switches the builder to Claw while both bleeds are up; it is off by default, because Shred lands 25-30% harder in the raid logs even with both bleeds on the target.
 
 The OctoWoW-specific parts, all read from the talent tree at login:
 
@@ -40,7 +40,8 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 
 | Command | What it toggles / does |
 |---|---|
-| `/fdps rip`, `rake`, `claw`, `ff`, `tf` | Rip upkeep, Rake upkeep, Claw with both bleeds up, Faerie Fire, Tiger's Fury |
+| `/fdps rip`, `rake`, `ff`, `tf` | Rip upkeep, Rake upkeep, Faerie Fire, Tiger's Fury |
+| `/fdps claw` | Claw instead of Shred while Rip and Rake are both up (off by default) |
 | `/fdps berserk` | Auto-Berserk on bosses (`/fdps btrash` for trash too) |
 | `/fdps pot`, `/fdps juju` | Mighty Rage Potion / Juju Flurry on bosses, off the GCD |
 | `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>`, `farm <mana%>`, `farmnet <energy>`, `income <mana>` |
@@ -71,4 +72,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.0`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.1`).

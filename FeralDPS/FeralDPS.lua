@@ -19,7 +19,7 @@
 --   /fdps aoe      - switch to AoE (bear) and execute
 --   /fdps rip      - toggle Rip upkeep at 5 CP        (default on)
 --   /fdps rake     - toggle Rake upkeep (default on; always on when fronting)
---   /fdps claw     - Claw instead of Shred while both bleeds are up (default on)
+--   /fdps claw     - Claw instead of Shred while both bleeds are up (default off)
 --   /fdps ff       - toggle Faerie Fire (Feral)       (default on)
 --   /fdps tf       - toggle Tiger's Fury              (default on)
 --   /fdps berserk  - auto-Berserk when the window is right (default on)
@@ -52,7 +52,8 @@ local F_ = {
   useRake       = true,   -- on since 1.15: the top feral logs keep Rake at 60-70%
                           -- (its ticks return energy, and Claw gets +30% per bleed)
   useFaerieFire = true,
-  clawBleeds    = true,   -- Open Wounds: Claw while Rake AND Rip are up (Shred on Clearcasting)
+  clawBleeds    = false,  -- Open Wounds: Claw while Rake AND Rip are up. Off since 1.16.1: Shred from
+                          -- behind measured 25-30% harder per hit than Claw with both bleeds up.
   useTigersFury = true,
   useBerserk    = true,
   allowPull     = false,  -- act on out-of-combat targets while already fighting
@@ -1220,8 +1221,12 @@ local function nextSpell_Cat(opts)
 
   -- Open Wounds 3/3 gives Claw +30% damage PER active bleed, so with Rake and
   -- Rip both up Claw hits for +60% at 40 energy against Shred's 48 - and needs
-  -- no positioning. Whether that beats Shred depends on weapon damage, so this
-  -- is a toggle to measure, not a default.
+  -- no positioning. Measured in the raid logs (MC and BWL, Oct-Nov 2026, four
+  -- ferals, non-crit hits with both bleeds up): Shred still lands 25-30%
+  -- harder, at every gear level. Per energy the two are about level (Shred
+  -- costs 20% more, 12% without Idol of Ferocity); per global cooldown Shred
+  -- is ahead, and with Reshift refilling the bar the GCD is the limit. So the
+  -- toggle is off by default since 1.16.1; /fdps claw turns it on.
   if F_.clawBleeds and getRipRemaining() > 0 and getRakeRemaining() > 0
      and not (isClearcasting() and isBehindTarget()) then
     return "Claw"
@@ -2045,7 +2050,7 @@ end
 -- ============================================================
 saveSettings = function()
   FeralDPS_Settings = {
-    version       = 11,
+    version       = 12,
     spec          = F_.spec,
     useRip        = F_.useRip,
     useRake       = F_.useRake,
@@ -2292,9 +2297,9 @@ local function feralInit()
     -- in isolation, but its ticks also hand back energy (Ancient Brutality)
     -- and feed Claw - so both go on once. /fdps rake and /fdps claw undo it.
     if (FeralDPS_Settings.version or 1) < 6 then
-      F_.useRake, F_.clawBleeds, F_.useReshift = true, true, true
-      out("|cFFFFD700FeralDPS|r 1.15: Rake upkeep ON, Claw with both bleeds ON, Reshift ON (the top feral logs do all three). "
-        .. "|cFFFFFFFF/fdps rake|r, |cFFFFFFFF/fdps claw|r, |cFFFFFFFF/fdps reshift|r to undo.")
+      F_.useRake, F_.useReshift = true, true
+      out("|cFFFFD700FeralDPS|r 1.15: Rake upkeep ON, Reshift ON. "
+        .. "|cFFFFFFFF/fdps rake|r, |cFFFFFFFF/fdps reshift|r to undo.")
     end
     -- Version 7 (1.15.8): the energy-bar measurement of what a Reshift pays
     -- was noisy and once pinned the ceiling at 30 from a "+70"; the exact
@@ -2329,6 +2334,15 @@ local function feralInit()
     if (FeralDPS_Settings.version or 1) < 11 then
       if F_.reshiftGain and F_.reshiftGain < 40 then F_.reshiftGain = nil end
       F_.reshiftGains = nil
+    end
+    -- Version 12 (1.16.1): "Claw while both bleeds are up" is off by default
+    -- (see the builder rule in nextSpell_Cat). A setting saved as ON under the
+    -- old default is switched off once, with a line saying how to undo it; a
+    -- later /fdps claw is kept.
+    if (FeralDPS_Settings.version or 1) < 12 and F_.clawBleeds then
+      F_.clawBleeds = false
+      out("|cFFFFD700FeralDPS|r 1.16.1: Claw with both bleeds up is now OFF - Shred from behind hits 25-30% harder in the raid logs. "
+        .. "|cFFFFFFFF/fdps claw|r turns it back on.")
     end
   end
 
@@ -2747,7 +2761,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps rake|r   — toggle Rake upkeep")
       out("  |cFFFFFFFF/fdps ff|r     — toggle Faerie Fire (Feral)")
       out("  |cFFFFFFFF/fdps tf|r     — toggle Tiger's Fury")
-      out("  |cFFFFFFFF/fdps claw|r   — Claw instead of Shred while Rake+Rip are up")
+      out("  |cFFFFFFFF/fdps claw|r   — Claw instead of Shred while Rake+Rip are up (default off)")
       out("  |cFFFFFFFF/fdps berserk|r— auto-Berserk (off = save it for Fear)")
       out("  |cFFFFFFFF/fdps pull|r   — allow acting on unpulled mobs mid-fight (default off)")
       out("  |cFFFFFFFF/fdps btrash|r — Berserk on cooldown instead of waiting for Rip (default off)")
