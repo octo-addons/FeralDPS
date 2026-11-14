@@ -81,10 +81,14 @@ local F_ = {
   -- Idol of the Moonfang (50 mana / 125 hp per Shred, doubled on a crit)
   -- feeds Reshifts there instead. The relic slot swaps in combat without a
   -- GCD, so the press that finds the wrong idol on equips the right one.
+  -- 1.16.2: three idols - Savagery on bosses, Ferocity on trash and in farm,
+  -- Moonfang on bleed-immune targets (see idolCandidates).
   idolSwap      = false,
-  idolBleed     = "Idol of Ferocity",
-  idolImmune    = "Idol of the Moonfang",
+  idolBleed     = "Idol of Savagery",      -- bosses that bleed ("boss idol"; the key keeps its old name)
+  idolTrash     = "Idol of Ferocity",      -- trash and /fdps farm
+  idolImmune    = "Idol of the Moonfang",  -- bleed-immune targets
   lastIdolSwapTime = 0,
+  bossThisFight = false,
   reshiftReserve = 700,   -- mana kept back: a Cat Form (55% base mana) after a shift out, and some
   reshiftCost   = 348,    -- mana per Reshift as the spellbook shows it (Natural Shapeshifter included)
   reshiftCount  = 0, lastReshiftTime = 0, reshiftHoldUntil = 0, reshiftWatch = nil,
@@ -156,6 +160,7 @@ local F_ = {
   rakeTickCount = 3,
   lastCastTime = 0,
   hudPos = nil,           -- saved HUD screen position { left=, bottom= }
+  hudHidden = false,      -- /fdps hide is remembered across logins (1.16.3); shown on a first install
 
   -- Form indices, resolved each rotation pass
   catIndex  = nil,
@@ -1489,17 +1494,41 @@ local function tryReshift(power)
 end
 
 -- ============================================================
--- IDOL SWAP (1.15.22)
+-- IDOL SWAP (1.15.22, three idols since 1.16.2)
 -- ============================================================
--- Which idol the current target calls for: the bleed idol (Ferocity) unless
--- the target is on the learned bleed-immune list, where Moonfang's mana per
--- Shred is the only thing an idol can still add.
-local function wantedIdol()
+-- The idols the current target calls for, best first; the first one that is
+-- worn or in the bags is the one used, so a missing idol falls back to the
+-- next instead of leaving the wrong one on.
+--   bleed-immune target -> Moonfang (mana per Shred), then the trash idol
+--   boss                -> the boss idol (Savagery: Rip and Rake tick 10%
+--                          faster), then the trash idol
+--   trash, /fdps farm   -> the trash idol (Ferocity: Claw and Rake 3 energy
+--                          cheaper; fronting and short-lived bleeds are the
+--                          rule there), then the boss idol
+-- Once a boss has been the target in a fight, its adds keep the boss idol:
+-- swapping the relic while the boss's bleeds tick could change them (it is
+-- not known whether OctoWoW fixes Savagery's faster ticks when a bleed
+-- lands), and an add's few seconds are not worth that.
+local function idolNames(a, b, c)
+  local t = {}
+  if a and a ~= "" then table.insert(t, a) end
+  if b and b ~= "" and b ~= a then table.insert(t, b) end
+  if c and c ~= "" and c ~= a and c ~= b then table.insert(t, c) end
+  return t
+end
+
+local function idolCandidates(spec)
   if not F_.idolSwap then return nil end
   if not UnitExists("target") or not UnitCanAttack("player", "target") then return nil end
-  local name = isImmune("Rip") and F_.idolImmune or F_.idolBleed
-  if not name or name == "" then return nil end
-  return name
+  if isImmune("Rip") then
+    return idolNames(F_.idolImmune, F_.idolTrash, F_.idolBleed), "bleed-immune target"
+  end
+  local boss = isBoss()
+  if boss and UnitAffectingCombat("player") then F_.bossThisFight = true end
+  if spec ~= "farm" and (boss or F_.bossThisFight) then
+    return idolNames(F_.idolBleed, F_.idolTrash), "boss"
+  end
+  return idolNames(F_.idolTrash, F_.idolBleed), (spec == "farm") and "farm" or "trash"
 end
 
 local function findInBags(name)
@@ -1518,30 +1547,33 @@ end
 -- Equips the idol the target calls for, if it is not on already and it is in
 -- the bags. Runs only from a key press (never from a timer or an event), at
 -- most once every 2s, and leaves the cursor clean. Returns true on a swap.
-local function ensureIdol()
-  local wanted = wantedIdol()
-  if not wanted then return false end
+local function ensureIdol(spec)
+  local list, why = idolCandidates(spec)
+  if not list then return false end
   local rslot = GetInventorySlotInfo("RangedSlot")
   local link = GetInventoryItemLink("player", rslot)
-  if link and string.find(link, wanted, 1, true) then return false end
-  if (GetTime() - (F_.lastIdolSwapTime or 0)) < 2 then return false end
-  if CursorHasItem() then return false end
-  local bag, slot = findInBags(wanted)
-  if not bag then
-    if F_.idolMissingWarned ~= wanted then
-      F_.idolMissingWarned = wanted
-      trace("idol", wanted .. " is not in the bags - keeping " .. tostring(F_.relic or "the current relic"))
+  for i = 1, table.getn(list) do
+    local name = list[i]
+    if link and string.find(link, name, 1, true) then return false end   -- already on
+    local bag, slot = findInBags(name)
+    if bag then
+      if (GetTime() - (F_.lastIdolSwapTime or 0)) < 2 then return false end
+      if CursorHasItem() then return false end
+      F_.lastIdolSwapTime = GetTime()
+      PickupContainerItem(bag, slot)
+      if CursorHasItem() then EquipCursorItem(rslot) end
+      if CursorHasItem() then ClearCursor() end
+      trace("idol", "-> " .. name .. " (" .. why .. ")")
+      if readRelic then readRelic() end
+      if computeCosts then computeCosts() end
+      return true
     end
-    return false
   end
-  F_.lastIdolSwapTime = GetTime()
-  PickupContainerItem(bag, slot)
-  if CursorHasItem() then EquipCursorItem(rslot) end
-  if CursorHasItem() then ClearCursor() end
-  trace("idol", "-> " .. wanted .. (isImmune("Rip") and " (bleed-immune target)" or ""))
-  if readRelic then readRelic() end
-  if computeCosts then computeCosts() end
-  return true
+  if F_.idolMissingWarned ~= why then
+    F_.idolMissingWarned = why
+    trace("idol", "no idol for " .. why .. " worn or in the bags - keeping " .. tostring(F_.relic or "the current relic"))
+  end
+  return false
 end
 
 local function executeRotation(specOverride)
@@ -1621,7 +1653,7 @@ local function executeRotation(specOverride)
   -- Idol for this target (cat only, /fdps idol). A relic swap has no GCD, so
   -- the ability picked below still goes out on the same press - exactly what
   -- an /equip + /cast macro does.
-  if isCatSpec(spec) and F_.idolSwap then ensureIdol() end
+  if isCatSpec(spec) and F_.idolSwap then ensureIdol(spec) end
 
   -- Savage Bite has NO global cooldown on this server, so in bear it goes out
   -- on every press it is ready for, on top of whatever the GCD ability is.
@@ -2050,7 +2082,7 @@ end
 -- ============================================================
 saveSettings = function()
   FeralDPS_Settings = {
-    version       = 12,
+    version       = 13,
     spec          = F_.spec,
     useRip        = F_.useRip,
     useRake       = F_.useRake,
@@ -2074,6 +2106,7 @@ saveSettings = function()
     bossHp        = F_.bossHp,
     idolSwap      = F_.idolSwap,
     idolBleed     = F_.idolBleed,
+    idolTrash     = F_.idolTrash,
     idolImmune    = F_.idolImmune,
     reshiftCost   = F_.reshiftCost,
     useEnrage     = F_.useEnrage,
@@ -2081,6 +2114,7 @@ saveSettings = function()
     useJuju       = F_.useJuju,
     enrageBoss    = F_.enrageBoss,
     hudPos        = F_.hudPos,
+    hudHidden     = F_.hudHidden,
   }
   FeralDPS_Settings.trace   = F_.traceLog
   FeralDPS_Settings.traceOn = F_.trace
@@ -2207,6 +2241,7 @@ local function feralInit()
   if FeralDPS_Settings then
     if FeralDPS_Settings.spec          then F_.spec          = FeralDPS_Settings.spec          end
     if type(FeralDPS_Settings.hudPos) == "table" then F_.hudPos = FeralDPS_Settings.hudPos end
+    if FeralDPS_Settings.hudHidden ~= nil then F_.hudHidden = FeralDPS_Settings.hudHidden end
     if FeralDPS_Settings.useRip        ~= nil then F_.useRip        = FeralDPS_Settings.useRip        end
     if FeralDPS_Settings.useRake       ~= nil then F_.useRake       = FeralDPS_Settings.useRake       end
     if FeralDPS_Settings.useFaerieFire ~= nil then F_.useFaerieFire = FeralDPS_Settings.useFaerieFire end
@@ -2230,6 +2265,7 @@ local function feralInit()
     if FeralDPS_Settings.idolSwap      ~= nil then F_.idolSwap      = FeralDPS_Settings.idolSwap      end
     if type(FeralDPS_Settings.idolBleed)  == "string" and FeralDPS_Settings.idolBleed  ~= "" then F_.idolBleed  = FeralDPS_Settings.idolBleed  end
     if type(FeralDPS_Settings.idolImmune) == "string" and FeralDPS_Settings.idolImmune ~= "" then F_.idolImmune = FeralDPS_Settings.idolImmune end
+    if type(FeralDPS_Settings.idolTrash)  == "string" then F_.idolTrash  = FeralDPS_Settings.idolTrash  end   -- "" = no trash idol
     if tonumber(FeralDPS_Settings.reshiftCost)    then F_.reshiftCost    = tonumber(FeralDPS_Settings.reshiftCost)    end
     if FeralDPS_Settings.useEnrage     ~= nil then F_.useEnrage     = FeralDPS_Settings.useEnrage     end
     if FeralDPS_Settings.useRagePot    ~= nil then F_.useRagePot    = FeralDPS_Settings.useRagePot    end
@@ -2339,6 +2375,13 @@ local function feralInit()
     -- (see the builder rule in nextSpell_Cat). A setting saved as ON under the
     -- old default is switched off once, with a line saying how to undo it; a
     -- later /fdps claw is kept.
+    -- Version 13 (1.16.2): three idols. The old single "bleed idol" default
+    -- (Ferocity) becomes the trash idol, and the boss idol becomes Savagery;
+    -- a missing Savagery falls back to Ferocity on its own.
+    if (FeralDPS_Settings.version or 1) < 13 and F_.idolBleed == "Idol of Ferocity" then
+      F_.idolBleed = "Idol of Savagery"
+      F_.idolTrash = "Idol of Ferocity"
+    end
     if (FeralDPS_Settings.version or 1) < 12 and F_.clawBleeds then
       F_.clawBleeds = false
       out("|cFFFFD700FeralDPS|r 1.16.1: Claw with both bleeds up is now OFF - Shred from behind hits 25-30% harder in the raid logs. "
@@ -2584,9 +2627,14 @@ function FeralDPS_OnLoad()
 
     elseif cmd == "show" then
       if F_.hud.frame then F_.hud.frame:Show() end
+      F_.hudHidden = false
+      saveSettings()
 
     elseif cmd == "hide" then
       if F_.hud.frame then F_.hud.frame:Hide() end
+      F_.hudHidden = true
+      saveSettings()
+      out("|cFFFFD700FeralDPS|r: HUD hidden - it stays hidden after /reload and logout. |cFFFFFFFF/fdps show|r brings it back.")
 
     elseif cmd == "reload" then
       F_.immune = {}
@@ -2594,23 +2642,35 @@ function FeralDPS_OnLoad()
       feralInit()
 
     elseif cmd == "idol" then
-      -- /fdps idol                  toggle the swap
-      -- /fdps idol bleed <name>     idol for everything that bleeds (Ferocity)
+      -- /fdps idol                  toggle the swap (and show the three idols)
+      -- /fdps idol boss <name>      idol for bosses that bleed (Savagery); "bleed" works too
+      -- /fdps idol trash <name>     idol for trash and /fdps farm (Ferocity); "none" = boss idol there too
       -- /fdps idol immune <name>    idol for bleed-immune targets (Moonfang)
       local _, _, sub, name = string.find(rest or "", "^(%S*)%s*(.-)%s*$")
       sub = string.lower(sub or "")
-      if (sub == "bleed" or sub == "immune") and name ~= "" then
-        if sub == "bleed" then F_.idolBleed = name else F_.idolImmune = name end
+      if (sub == "bleed" or sub == "boss" or sub == "trash" or sub == "immune") and name ~= "" then
+        if string.lower(name) == "none" then name = "" end
+        if sub == "trash" then F_.idolTrash = name
+        elseif sub == "immune" then F_.idolImmune = name
+        else F_.idolBleed = name end
         saveSettings()
-        out("|cFFFFD700FeralDPS|r: " .. sub .. " idol is now |cFFFFFFFF" .. name .. "|r" .. (findInBags(name) and "" or " (not in the bags right now)"))
+        local label = (sub == "bleed") and "boss" or sub
+        if name == "" then
+          out("|cFFFFD700FeralDPS|r: no " .. label .. " idol - the next one in line is used there.")
+        else
+          out("|cFFFFD700FeralDPS|r: " .. label .. " idol is now |cFFFFFFFF" .. name .. "|r" .. (findInBags(name) and "" or " (not in the bags right now)"))
+        end
       else
-        toggle("idolSwap", "Idol swap on the press (" .. tostring(F_.idolBleed) .. " / " .. tostring(F_.idolImmune) .. " on bleed-immune targets)")
+        toggle("idolSwap", "Idol swap on the press")
         local rslot = GetInventorySlotInfo("RangedSlot")
         local link = GetInventoryItemLink("player", rslot)
         local _, _, worn = string.find(link or "", "%[(.-)%]")
-        out("  wearing: " .. tostring(worn or "nothing") .. ".  In the bags: "
-          .. (findInBags(F_.idolBleed or "") and F_.idolBleed or "-") .. " / "
-          .. (findInBags(F_.idolImmune or "") and F_.idolImmune or "-"))
+        local function where(n)
+          if not n or n == "" then return "|cFF888888(none)|r" end
+          if worn == n then return "|cFFFFFFFF" .. n .. "|r (worn)" end
+          return "|cFFFFFFFF" .. n .. "|r" .. (findInBags(n) and " (bags)" or " |cFFFF4444(not found)|r")
+        end
+        out("  boss: " .. where(F_.idolBleed) .. "   trash/farm: " .. where(F_.idolTrash) .. "   bleed-immune: " .. where(F_.idolImmune))
       end
 
     elseif cmd == "bosshp" then
@@ -2765,7 +2825,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps berserk|r— auto-Berserk (off = save it for Fear)")
       out("  |cFFFFFFFF/fdps pull|r   — allow acting on unpulled mobs mid-fight (default off)")
       out("  |cFFFFFFFF/fdps btrash|r — Berserk on cooldown instead of waiting for Rip (default off)")
-      out("  |cFFFFFFFF/fdps idol|r   — swap idols on the press: bleed idol normally, Moonfang on bleed-immune targets (default off); idol bleed|immune <name>")
+      out("  |cFFFFFFFF/fdps idol|r   — swap idols on the press (default off): Savagery on bosses, Ferocity on trash/farm, Moonfang on bleed-immune targets; idol boss||trash||immune <name>")
       out("  |cFFFFFFFF/fdps enrage|r — bear: Enrage for rage when starved, trash only (default on)")
       out("  |cFFFFFFFF/fdps pot|r    — bosses: drink Mighty Rage Potion at the right moment (default off; shares the potion cooldown)")
       out("  |cFFFFFFFF/fdps juju|r   — bosses: use Juju Flurry whenever it is ready (default off)")
@@ -2777,7 +2837,8 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps trace|r  — log every press/cast/error with timestamps (|cFFFFFFFFtrace show [n]|r, |cFFFFFFFFtrace clear|r)")
       out("  |cFFFFFFFF/fdps immune|r — learned bleed immunities (|cFFFFFFFFimmune clear <name>|r forgets one)")
       out("  |cFFFFFFFF/fdps hudreset|r — put the HUD back where it started (it remembers where you drag it)")
-      out("  |cFFFFFFFF/fdps show|r / |cFFFFFFFFhide|r / |cFFFFFFFFdebug|r / |cFFFFFFFFreload|r")
+      out("  |cFFFFFFFF/fdps show|r / |cFFFFFFFFhide|r — the HUD (hide is remembered across logins)")
+      out("  |cFFFFFFFF/fdps debug|r / |cFFFFFFFFreload|r")
 
     else
       executeRotation()
@@ -3137,6 +3198,7 @@ function FeralDPS_OnLoad()
   fights:SetScript("OnEvent", function()
     if event == "PLAYER_REGEN_DISABLED" then
       F_.fightStart = GetTime()
+      F_.bossThisFight = false        -- idol swap: a new fight starts on the trash idol
       F_.reshiftNoGain = 0            -- a new fight gets a fresh try
       F_.reshiftHoldUntil = 0
     elseif F_.fightStart then
@@ -3378,5 +3440,6 @@ function FeralDPS_OnLoad()
     if not F_.hud.frame then
       createHUD()
     end
+    if F_.hud.frame and F_.hudHidden then F_.hud.frame:Hide() end
   end)
 end
