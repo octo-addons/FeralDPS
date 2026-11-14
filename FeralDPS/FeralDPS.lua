@@ -2665,12 +2665,25 @@ function FeralDPS_OnLoad()
         local rslot = GetInventorySlotInfo("RangedSlot")
         local link = GetInventoryItemLink("player", rslot)
         local _, _, worn = string.find(link or "", "%[(.-)%]")
-        local function where(n)
-          if not n or n == "" then return "|cFF888888(none)|r" end
-          if worn == n then return "|cFFFFFFFF" .. n .. "|r (worn)" end
-          return "|cFFFFFFFF" .. n .. "|r" .. (findInBags(n) and " (bags)" or " |cFFFF4444(not found)|r")
+        -- 1.16.4: an idol you do not have is not an error - the next one in
+        -- line is used (no Moonfang from Kara10 -> Ferocity on bleed-immune
+        -- bosses), so the line says which one that will be.
+        local function have(n) return n and n ~= "" and (worn == n or findInBags(n)) end
+        local function where(list)
+          local first = list[1]
+          for i = 1, table.getn(list) do
+            local n = list[i]
+            if have(n) then
+              local tag = (worn == n) and " (worn)" or " (bags)"
+              if i == 1 then return "|cFFFFFFFF" .. n .. "|r" .. tag end
+              return "|cFF888888" .. first .. " not found ->|r |cFFFFFFFF" .. n .. "|r" .. tag
+            end
+          end
+          return "|cFF888888" .. tostring(first or "(none)") .. " not found - the current relic stays on|r"
         end
-        out("  boss: " .. where(F_.idolBleed) .. "   trash/farm: " .. where(F_.idolTrash) .. "   bleed-immune: " .. where(F_.idolImmune))
+        out("  boss: " .. where(idolNames(F_.idolBleed, F_.idolTrash))
+          .. "   trash/farm: " .. where(idolNames(F_.idolTrash, F_.idolBleed))
+          .. "   bleed-immune: " .. where(idolNames(F_.idolImmune, F_.idolTrash, F_.idolBleed)))
       end
 
     elseif cmd == "bosshp" then
