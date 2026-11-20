@@ -99,6 +99,7 @@ local F_ = {
   useEnrage     = true,   -- bear: Enrage for rage when starved (trash only)
   useRagePot    = false,  -- /fdps pot: Mighty Rage Potion on bosses, timed for the Rip snapshot
   useJuju       = false,  -- /fdps juju: Juju Flurry on bosses whenever it is ready
+  useTrinkets   = true,   -- /fdps trinket: on-use trinkets (Zandalarian Hero Medallion, ...) on bosses
   lastConsumableTry = 0, lastPotUse = 0, potWarned = false, jujuWarned = false,
   enrageBoss    = false,  -- bear: allow Enrage on bosses too (armor debuff!)
   lastEnrageTime = 0,
@@ -999,8 +1000,47 @@ local function useItem(id, selfTarget)
   return true
 end
 
+-- 1.16.5: on-use trinkets. Only damage trinkets a cat wants on a boss are
+-- listed; a trinket that is not on the list (Blackhand's Breadth, Hand of
+-- Justice, a PvP insignia...) is never pressed. Equipping one starts a 30s
+-- cooldown in the game, which the cooldown check below covers too.
+local ON_USE_TRINKETS = {
+  ["Zandalarian Hero Medallion"] = true,   -- +40 melee damage, -2 per hit, 20s
+  ["Molten Emberstone"]          = true,   -- +200 attack power, 20s
+  ["Earthstrike"]                = true,   -- +280 attack power, 20s
+  ["Kiss of the Spider"]         = true,   -- +20% attack speed, 15s
+  ["Jom Gabbar"]                 = true,   -- growing attack power, 20s
+  ["Badge of the Swarmguard"]    = true,   -- armor penetration stacks, 30s
+  ["Slayer's Crest"]             = true,   -- +260 attack power, 20s
+}
+
+local function trinketName(slot)
+  local link = GetInventoryItemLink("player", slot)
+  if not link then return nil end
+  local _, _, name = string.find(link, "%[(.-)%]")
+  return name
+end
+
+local function trinketReady(slot)
+  local start, duration = GetInventoryItemCooldown("player", slot)
+  if not start or start == 0 or not duration or duration == 0 then return true end
+  return (start + duration - GetTime()) <= 0
+end
+
+-- The equipped on-use trinkets, slot 13 first
+local function onUseTrinkets()
+  local list = {}
+  for slot = 13, 14 do
+    local name = trinketName(slot)
+    if name and ON_USE_TRINKETS[name] then
+      table.insert(list, { slot = slot, name = name })
+    end
+  end
+  return list
+end
+
 local function tryBossConsumables(inCat, power, pts)
-  if not (F_.useRagePot or F_.useJuju) then return end
+  if not (F_.useRagePot or F_.useJuju or F_.useTrinkets) then return end
   if not UnitAffectingCombat("player") or not isBoss() then return end
   local now = GetTime()
   if now - F_.lastConsumableTry < 1.0 then return end     -- bag scans are not free
@@ -1042,6 +1082,22 @@ local function tryBossConsumables(inCat, power, pts)
     elseif why == "not in bags" and not F_.jujuWarned then
       F_.jujuWarned = true
       out("|cFFFFD700FeralDPS|r: /fdps juju is on, but there is no Juju Flurry in the bags.")
+    end
+  end
+
+  -- On-use trinkets go into the same burst as Tiger's Fury (and, when it is
+  -- up, Berserk): cat only, bosses only. One trinket per press, so two
+  -- trinkets are spread over two presses instead of firing at once.
+  if F_.useTrinkets and inCat and tfUp then
+    local list = onUseTrinkets()
+    for i = 1, table.getn(list) do
+      local t = list[i]
+      if trinketReady(t.slot) then
+        UseInventoryItem(t.slot)
+        trace("item", t.name .. " (slot " .. t.slot .. ")")
+        if FeralDPS.OnDecision then FeralDPS.OnDecision(t.name, power, pts, true, false) end
+        break
+      end
     end
   end
 end
@@ -1718,7 +1774,7 @@ local function executeRotation(specOverride)
   end
 
   -- Boss consumables are off the GCD too (see tryBossConsumables)
-  if inCombat and (F_.useRagePot or F_.useJuju) then
+  if inCombat and (F_.useRagePot or F_.useJuju or F_.useTrinkets) then
     tryBossConsumables(isCatSpec(spec), UnitMana("player"), GetComboPoints())
   end
 
@@ -2112,6 +2168,7 @@ saveSettings = function()
     useEnrage     = F_.useEnrage,
     useRagePot    = F_.useRagePot,
     useJuju       = F_.useJuju,
+    useTrinkets   = F_.useTrinkets,
     enrageBoss    = F_.enrageBoss,
     hudPos        = F_.hudPos,
     hudHidden     = F_.hudHidden,
@@ -2270,6 +2327,7 @@ local function feralInit()
     if FeralDPS_Settings.useEnrage     ~= nil then F_.useEnrage     = FeralDPS_Settings.useEnrage     end
     if FeralDPS_Settings.useRagePot    ~= nil then F_.useRagePot    = FeralDPS_Settings.useRagePot    end
     if FeralDPS_Settings.useJuju       ~= nil then F_.useJuju       = FeralDPS_Settings.useJuju       end
+    if FeralDPS_Settings.useTrinkets   ~= nil then F_.useTrinkets   = FeralDPS_Settings.useTrinkets   end
     if FeralDPS_Settings.enrageBoss    ~= nil then F_.enrageBoss    = FeralDPS_Settings.enrageBoss    end
     if type(FeralDPS_Settings.trace) == "table" then F_.traceLog = FeralDPS_Settings.trace end
     if FeralDPS_Settings.traceOn then
@@ -2501,6 +2559,17 @@ function FeralDPS_OnLoad()
     elseif cmd == "enrage" then toggle("useEnrage",    "Bear: Enrage when rage-starved (trash)")
     elseif cmd == "pot"    then F_.potWarned = false; toggle("useRagePot", "Boss: Mighty Rage Potion (before the first Rip, then Shred bursts; bear: when rage is short)")
     elseif cmd == "juju"   then F_.jujuWarned = false; toggle("useJuju", "Boss: Juju Flurry whenever it is ready")
+    elseif cmd == "trinket" or cmd == "trinkets" then
+      toggle("useTrinkets", "Boss: on-use trinkets with Tiger's Fury")
+      local list = onUseTrinkets()
+      if table.getn(list) == 0 then
+        out("|cFFFFD700FeralDPS|r: no on-use damage trinket equipped (known: Zandalarian Hero Medallion, Molten Emberstone, Earthstrike, ...)")
+      else
+        for i = 1, table.getn(list) do
+          out("|cFFFFD700FeralDPS|r: slot " .. list[i].slot .. ": " .. list[i].name
+            .. (trinketReady(list[i].slot) and " (ready)" or " (on cooldown)"))
+        end
+      end
     elseif cmd == "enrageboss" then toggle("enrageBoss", "Bear: Enrage on bosses too (armor debuff!)")
 
     elseif cmd == "shift" then
@@ -2842,6 +2911,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps enrage|r — bear: Enrage for rage when starved, trash only (default on)")
       out("  |cFFFFFFFF/fdps pot|r    — bosses: drink Mighty Rage Potion at the right moment (default off; shares the potion cooldown)")
       out("  |cFFFFFFFF/fdps juju|r   — bosses: use Juju Flurry whenever it is ready (default off)")
+      out("  |cFFFFFFFF/fdps trinket|r — bosses: on-use trinkets (Zandalarian Hero Medallion, Molten Emberstone...) with Tiger's Fury (default on)")
       out("  |cFFFFFFFF/fdps enrageboss|r — bear: allow Enrage on bosses too (default off)")
       out("  |cFFFFFFFF/fdps reshift|r — Reshift (OctoWoW powershift: empties the bar, sets it to 60) when nearly out of energy; energy/reserve/cost <n> to tune")
       out("  |cFFFFFFFF/fdps shift|r  — old DruidBar powershifting")
