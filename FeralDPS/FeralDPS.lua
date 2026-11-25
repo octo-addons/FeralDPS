@@ -530,6 +530,32 @@ local function persistImmune()
   FeralDPS_Settings.immune = copy
 end
 
+-- 1.16.6: bleed immunities OctoWoW's combat log has confirmed ("X is
+-- immune" on Rip/Rake, René's account, 25/11-2026). Every install gets them
+-- once, so a new user does not lose the first Rip and Rake on Ragnaros or
+-- Baron Geddon learning what the guild already knows. The seed runs once per
+-- KNOWN_IMMUNE_VERSION: a name removed with /fdps immune clear stays removed.
+-- (Gurubashi Berserker is left out on purpose - not bleed-immune in vanilla;
+-- if it is on Octo, the first Rip learns it.)
+local KNOWN_IMMUNE_VERSION = 1
+local KNOWN_IMMUNE = {
+  -- Molten Core
+  "Ragnaros", "Baron Geddon", "Lava Surger", "Firewalker", "Lava Reaver",
+  "Lava Annihilator", "Firelord", "Flameguard", "Lava Elemental",
+  "Molten Giant", "Molten Destroyer",
+  -- Onyxia's Lair, Blackwing Lair
+  "Onyxian Flamespawn", "Shadowflame Spark",
+  -- Blackrock Depths / Spire
+  "Lord Incendius", "Sorcerer-Thane Thaurissan", "Shadowforge Guardian",
+  "Pyroguard Emberseer", "Magmus", "Shadowforge Blazeweaver",
+  -- Karazhan
+  "Moroes", "Arc'tiras", "Phantom Servant", "Phantom Cook", "Phantom Guardsman",
+  "Black Bride", "Grellkin Channeler", "Dark Shade", "Haunted Blacksmith",
+  -- Scholomance / Stratholme / other
+  "Baroness Anastari", "Risen Construct", "Corroding Mass", "Archlich Enkhraz",
+  "Drifting Avatar of Sand",
+}
+
 local function markImmune(name, spell)
   if not name or not spell then return end
   if not LEARNABLE_IMMUNE[spell] then return end
@@ -555,6 +581,20 @@ local function markImmune(name, spell)
     F_.immune[name]["Rip"] = true
   end
   persistImmune()
+end
+
+-- Adds the known list once (see KNOWN_IMMUNE). Returns how many were new.
+local function seedKnownImmune(force)
+  if not force and (F_.immuneSeed or 0) >= KNOWN_IMMUNE_VERSION then return 0 end
+  local added = 0
+  for _, mob in ipairs(KNOWN_IMMUNE) do
+    if not F_.immune[mob] then
+      F_.immune[mob] = { Rip = true, Rake = true }
+      added = added + 1
+    end
+  end
+  F_.immuneSeed = KNOWN_IMMUNE_VERSION
+  return added
 end
 
 local function isClearcasting()
@@ -2172,6 +2212,7 @@ saveSettings = function()
     enrageBoss    = F_.enrageBoss,
     hudPos        = F_.hudPos,
     hudHidden     = F_.hudHidden,
+    immuneSeed    = F_.immuneSeed,
   }
   FeralDPS_Settings.trace   = F_.traceLog
   FeralDPS_Settings.traceOn = F_.trace
@@ -2299,6 +2340,7 @@ local function feralInit()
     if FeralDPS_Settings.spec          then F_.spec          = FeralDPS_Settings.spec          end
     if type(FeralDPS_Settings.hudPos) == "table" then F_.hudPos = FeralDPS_Settings.hudPos end
     if FeralDPS_Settings.hudHidden ~= nil then F_.hudHidden = FeralDPS_Settings.hudHidden end
+    if tonumber(FeralDPS_Settings.immuneSeed) then F_.immuneSeed = tonumber(FeralDPS_Settings.immuneSeed) end
     if FeralDPS_Settings.useRip        ~= nil then F_.useRip        = FeralDPS_Settings.useRip        end
     if FeralDPS_Settings.useRake       ~= nil then F_.useRake       = FeralDPS_Settings.useRake       end
     if FeralDPS_Settings.useFaerieFire ~= nil then F_.useFaerieFire = FeralDPS_Settings.useFaerieFire end
@@ -2445,6 +2487,13 @@ local function feralInit()
       out("|cFFFFD700FeralDPS|r 1.16.1: Claw with both bleeds up is now OFF - Shred from behind hits 25-30% harder in the raid logs. "
         .. "|cFFFFFFFF/fdps claw|r turns it back on.")
     end
+  end
+
+  local seeded = seedKnownImmune(false)
+  if seeded > 0 then
+    saveSettings()
+    out("|cFFFFD700FeralDPS|r: added " .. seeded .. " known bleed-immune mobs (Ragnaros, Baron Geddon...). "
+      .. "|cFFFFFFFF/fdps immune|r lists them, |cFFFFFFFF/fdps immune add <name>|r adds one.")
   end
 
   readTalents()
@@ -2659,7 +2708,25 @@ function FeralDPS_OnLoad()
       --                         "is immune" line re-learns a real one at once
       local _, _, sub, who = string.find(rest or "", "^(%S*)%s*(.-)%s*$")
       sub = string.lower(sub or "")
-      if sub == "clear" and who ~= "" then
+      if sub == "add" then
+        -- /fdps immune add <name>   (or "target": the current target's name)
+        if who == "" or string.lower(who) == "target" then who = UnitName("target") or "" end
+        if who == "" then
+          out("|cFFFFD700FeralDPS|r: /fdps immune add <name>  - or target the mob and use /fdps immune add")
+        else
+          F_.immune[who] = F_.immune[who] or {}
+          F_.immune[who]["Rip"] = true
+          F_.immune[who]["Rake"] = true
+          saveSettings()
+          out("|cFFFFD700FeralDPS|r: |cFFFFFFFF" .. who .. "|r marked bleed-immune - no Rip or Rake on it. "
+            .. "|cFFFFFFFF/fdps immune clear " .. who .. "|r undoes it.")
+        end
+      elseif sub == "known" then
+        -- /fdps immune known   adds the built-in list again (after a clear all)
+        local n = seedKnownImmune(true)
+        saveSettings()
+        out("|cFFFFD700FeralDPS|r: " .. n .. " known bleed-immune mobs added back.")
+      elseif sub == "clear" and who ~= "" then
         if string.lower(who) == "all" then
           F_.immune = {}
           out("|cFFFFD700FeralDPS|r: all learned immunities forgotten.")
@@ -2678,7 +2745,7 @@ function FeralDPS_OnLoad()
         saveSettings()
       else
         local n = 0
-        out("|cFFFFD700FeralDPS|r: learned immunities (|cFFFFFFFF/fdps immune clear <name>|r forgets one):")
+        out("|cFFFFD700FeralDPS|r: bleed immunities (|cFFFFFFFF/fdps immune add <name>|r adds one, |cFFFFFFFF/fdps immune clear <name>|r forgets one):")
         for mob, t in pairs(F_.immune) do
           local sp = ""
           for s, _ in pairs(t) do sp = sp .. s .. " " end
@@ -2707,6 +2774,7 @@ function FeralDPS_OnLoad()
 
     elseif cmd == "reload" then
       F_.immune = {}
+      seedKnownImmune(true)   -- the confirmed list comes back (1.16.6)
       saveSettings()          -- forget learned immunities on disk too
       feralInit()
 
@@ -2912,6 +2980,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps pot|r    — bosses: drink Mighty Rage Potion at the right moment (default off; shares the potion cooldown)")
       out("  |cFFFFFFFF/fdps juju|r   — bosses: use Juju Flurry whenever it is ready (default off)")
       out("  |cFFFFFFFF/fdps trinket|r — bosses: on-use trinkets (Zandalarian Hero Medallion, Molten Emberstone...) with Tiger's Fury (default on)")
+      out("  |cFFFFFFFF/fdps immune|r — list bleed-immune mobs; immune add <name>||target, immune clear <name>||all, immune known")
       out("  |cFFFFFFFF/fdps enrageboss|r — bear: allow Enrage on bosses too (default off)")
       out("  |cFFFFFFFF/fdps reshift|r — Reshift (OctoWoW powershift: empties the bar, sets it to 60) when nearly out of energy; energy/reserve/cost <n> to tune")
       out("  |cFFFFFFFF/fdps shift|r  — old DruidBar powershifting")

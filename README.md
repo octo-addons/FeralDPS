@@ -28,7 +28,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 - **Tiger's Fury** has no global cooldown on this server and is fired outside the GCD guard, so it goes out the moment it is wanted - including right after a Reshift.
 - **Cenarion Harness** - the pieces on are counted by name; with 5 the Tiger's Fury cost is 25, which the energy check and the Reshift net rule both use.
 - **Rip duration** by combo points (10/12/14/16/18 s), the Idol of Savagery factor, Idol of Ferocity costs and Improved Shred / Ferocity costs are all resolved from the tree and the ranged slot.
-- **Bleed-immune targets** are learned (three Rips without a debuff, or an "immune" line) and remembered across sessions; Rip and Rake are skipped on them.
+- **Bleed-immune targets** are learned from the combat log's "immune" line and remembered across sessions; Rip and Rake are skipped on them. A built-in list of immunities confirmed on OctoWoW (Ragnaros, Baron Geddon, the MC elementals, Karazhan ghosts...) is added once on install, and `/fdps immune add <name>` adds one by hand.
 - **Debuff cap** - with Nampower, bleed ticks are read from the server log, so Rip and Rake are tracked even when the 16 visible debuff slots are full (OctoWoW allows 40).
 - **Vaelastrasz** - while Essence of the Red is up (20 energy a second for the whole fight) Reshift and Berserk are skipped: the energy is free, the GCD and the 5-minute cooldown are not.
 - **Dungeon bosses** - an elite with 25 000+ health counts as a boss outside raids (Berserk, Reshift mana). In raid zones only "??" counts.
@@ -44,6 +44,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps claw` | Claw instead of Shred while Rip and Rake are both up (off by default) |
 | `/fdps berserk` | Auto-Berserk on bosses (`/fdps btrash` for trash too) |
 | `/fdps pot`, `/fdps juju` | Mighty Rage Potion / Juju Flurry on bosses, off the GCD |
+| `/fdps immune` | Lists bleed-immune mobs (learned from the combat log, plus a built-in list of confirmed Octo immunities: Ragnaros, Baron Geddon...). `immune add <name>` (or target + `immune add`), `immune clear <name>`/`all`, `immune known` |
 | `/fdps trinket` | On-use trinkets (Zandalarian Hero Medallion, Molten Emberstone, ...) on bosses together with Tiger's Fury, off the GCD (default on) |
 | `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>`, `farm <mana%>`, `farmnet <energy>`, `income <mana>` |
 | `/fdps bosshp [n]` | What the current target is judged as; sets the dungeon-boss health threshold |
@@ -53,7 +54,6 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps chat <tab>` | Route all output (FeralTrack too) to a chat tab |
 | `/fdps talents` | What the client reports for the talent tree and the costs derived from it |
 | `/fdps trace` | Log every press, decision, cast and client error (`/fdps trace show`, `clear`) |
-| `/fdps immune` | The learned bleed-immune list |
 | `/fdps show`, `hide`, `hudreset` | The HUD (hide is remembered across logins) |
 | `/fdps debug`, `reload`, `help` | |
 
@@ -73,4 +73,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.5`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.6`).
