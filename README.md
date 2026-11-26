@@ -30,6 +30,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 - **Rip duration** by combo points (10/12/14/16/18 s), the Idol of Savagery factor, Idol of Ferocity costs and Improved Shred / Ferocity costs are all resolved from the tree and the ranged slot.
 - **Bleed-immune targets** are learned from the combat log's "immune" line and remembered across sessions; Rip and Rake are skipped on them. A built-in list of immunities confirmed on OctoWoW (Ragnaros, Baron Geddon, the MC elementals, Karazhan ghosts...) is added once on install, and `/fdps immune add <name>` adds one by hand.
 - **Debuff cap** - with Nampower, bleed ticks are read from the server log, so Rip and Rake are tracked even when the 16 visible debuff slots are full (OctoWoW allows 40).
+- **Buff cap** - a player holds 32 buffs, and a fully buffed raid cat sits at 30-32. On a full bar Tiger's Fury is cast and paid for but never lands, so it is held instead (and so are Mighty Rage, Juju Flurry and on-use trinkets in cat, whose buffs would not land either). A Tiger's Fury that is cast twice without the buff showing up is held for 10 s even when the count looks fine. Once a minute in combat the chat names the buffs a cat can right-click off (tracking, Prayer of Spirit, Blessing of Light/Sanctuary, Health II, rum, cosmetic glyph...). The HUD shows the count at the top: yellow at 29-30, orange at 31, flashing at 32/32, with "BUFF BAR FULL - NO TIGER'S FURY" when it is blocking TF.
 - **Vaelastrasz** - while Essence of the Red is up (20 energy a second for the whole fight) Reshift and Berserk are skipped: the energy is free, the GCD and the 5-minute cooldown are not.
 - **Dungeon bosses** - an elite with 25 000+ health counts as a boss outside raids (Berserk, Reshift mana). In raid zones only "??" counts.
 - **Idol swap** (`/fdps idol`, off by default) - the relic slot can be changed in combat without a global cooldown, so the press that finds the wrong idol on equips the right one from the bags and still fires its ability: Idol of Savagery on bosses, Idol of Ferocity on trash and in `/fdps farm`, Idol of the Moonfang (mana per Shred) on bleed-immune targets. Once a boss has been the target, its adds keep the boss idol for the rest of the fight, and an idol that is not in the bags falls back to the next in line. Never from a timer or an event - only on a key press, like an `/equip` + `/cast` macro.
@@ -46,6 +47,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps pot`, `/fdps juju` | Mighty Rage Potion / Juju Flurry on bosses, off the GCD |
 | `/fdps immune` | Lists bleed-immune mobs (learned from the combat log, plus a built-in list of confirmed Octo immunities: Ragnaros, Baron Geddon...). `immune add <name>` (or target + `immune add`), `immune clear <name>`/`all`, `immune known` |
 | `/fdps trinket` | On-use trinkets (Zandalarian Hero Medallion, Molten Emberstone, ...) on bosses together with Tiger's Fury, off the GCD (default on) |
+| `/fdps buffs` | How many buffs are on you out of the 32 that fit, every buff by name, the ones a cat can drop in orange |
 | `/fdps reshift` | Reshift on/off; `reshift energy <n>`, `reserve <mana>`, `cost <mana>`, `net <energy>`, `farm <mana%>`, `farmnet <energy>`, `income <mana>` |
 | `/fdps bosshp [n]` | What the current target is judged as; sets the dungeon-boss health threshold |
 | `/fdps idol` | Idol swap on the press (off by default) and the three idols it uses; `idol boss <name>`, `idol trash <name>`, `idol immune <name>` pick them |
@@ -73,4 +75,4 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.6`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.7`).

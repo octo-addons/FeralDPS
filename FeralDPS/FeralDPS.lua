@@ -362,6 +362,106 @@ local function debuffBarFull()
 end
 
 -- ============================================================
+-- BUFF CAP (1.16.7)
+-- ============================================================
+-- The PLAYER has a cap too: 32 buffs. A fully buffed raid cat (six
+-- blessings, totems, flask, elixirs, food, Zanza, jujus, tracking...) sits at
+-- 30-32, and once the bar is full a new buff simply does not land. Tiger's
+-- Fury is still cast and the energy is still spent, but no buff shows up -
+-- so the rotation saw "TF missing" and pressed it again every 2 seconds.
+-- Budroidd's Broodlord (BWL 25/11): 20 Tiger's Fury, 2 landed, 6 Shreds and
+-- no Bites in 57s. Quintis' BWL nights show it too (26 casts that never
+-- landed on 25/11 - Firemaw, Ezzel, Ebonroc, Flamegor, Chromaggus), while MC
+-- and Onyxia, with fewer buffs, almost never hit it.
+-- Now: Tiger's Fury (and the boss burst items, whose buffs would not land
+-- either) is held while the bar is full, a TF that was cast twice without
+-- the buff appearing is held for 10s whatever the count says, the chat says
+-- once a minute which buffs can go, and the HUD shows the count.
+local BUFF_CAP = 32
+
+local function countPlayerBuffs()
+  local n = 0
+  for i = 0, 63 do
+    local id = GetPlayerBuff(i, "HELPFUL")
+    if not id or id < 0 then break end
+    n = n + 1
+  end
+  return n
+end
+
+-- Buffs that do nothing (or next to nothing) for a cat's damage. Only the
+-- ones actually on the bar are named in the warning.
+local LOW_VALUE_BUFFS = {
+  ["Find Herbs"] = true, ["Find Minerals"] = true, ["Find Treasure"] = true, ["Track Humanoids"] = true,
+  ["Glyph of the Dream Panther"] = true,          -- cosmetic cat form
+  ["Rumsey Rum Black Label"] = true, ["Rumsey Rum Dark"] = true, ["Rumsey Rum Light"] = true, ["Rumsey Rum"] = true,
+  ["Health II"] = true,                           -- Elixir of Fortitude: +120 health
+  ["Distilled Wisdom"] = true,                    -- mana flask
+  ["Prayer of Spirit"] = true, ["Divine Spirit"] = true,
+  ["Greater Blessing of Light"] = true, ["Blessing of Light"] = true,
+  ["Greater Blessing of Sanctuary"] = true, ["Blessing of Sanctuary"] = true,
+}
+
+local function playerBuffNames()
+  local list = {}
+  for i = 0, 63 do
+    local id = GetPlayerBuff(i, "HELPFUL")
+    if not id or id < 0 then break end
+    table.insert(list, playerBuffName(id) or "?")
+  end
+  return list
+end
+
+local function lowValueBuffsPresent()
+  local found, seen = {}, {}
+  local names = playerBuffNames()
+  for i = 1, table.getn(names) do
+    local n = names[i]
+    if LOW_VALUE_BUFFS[n] and not seen[n] then
+      seen[n] = true
+      table.insert(found, n)
+    end
+  end
+  return found
+end
+
+-- Once a minute at most, and only in combat (that is when it costs)
+local function warnBuffBarFull(what)
+  local now = GetTime()
+  if (now - (F_.buffWarnAt or 0)) < 60 then return end
+  F_.buffWarnAt = now
+  local n = countPlayerBuffs()
+  local found = lowValueBuffsPresent()
+  local hint
+  if table.getn(found) > 0 then
+    hint = " Right-click off: |cFFFFFFFF" .. table.concat(found, ", ") .. "|r."
+  else
+    hint = " Right-click off a buff a cat does not need (tracking, Spirit, Blessing of Light/Sanctuary...)."
+  end
+  local head = (n >= BUFF_CAP) and ("buff bar full (" .. n .. "/" .. BUFF_CAP .. ")")
+               or ("buff bar probably full (" .. n .. "/" .. BUFF_CAP .. " shown)")
+  out("|cFFFFD700FeralDPS|r: |cFFFF8800" .. head .. "|r - " .. what .. "." .. hint)
+  trace("buffs", "bar full (" .. n .. "): " .. what)
+end
+
+-- /fdps buffs: the count and every buff by name, the expendable ones marked
+local function printBuffs()
+  local names = playerBuffNames()
+  local n = table.getn(names)
+  local col = (n >= BUFF_CAP) and "|cFFFF3333" or ((n >= BUFF_CAP - 2) and "|cFFFF8800" or "|cFF00FF00")
+  out("|cFFFFD700FeralDPS|r: " .. col .. n .. "/" .. BUFF_CAP .. " buffs|r"
+    .. ((n >= BUFF_CAP) and " - full: Tiger's Fury and burst items cannot land" or "")
+    .. "  (|cFFFF8800orange|r = no use to a cat, right-click it off)")
+  local line = ""
+  for i = 1, n do
+    local s = LOW_VALUE_BUFFS[names[i]] and ("|cFFFF8800" .. names[i] .. "|r") or names[i]
+    line = (line == "") and s or (line .. ", " .. s)
+    if string.len(line) > 200 then out("  " .. line); line = "" end
+  end
+  if line ~= "" then out("  " .. line) end
+end
+
+-- ============================================================
 -- NAMPOWER WITNESSES
 -- With Nampower loaded the guessing stops. It hands the addon what the 1.12
 -- API hides: every aura on the target by spell ID (GetUnitField "aura", all 16
@@ -895,6 +995,7 @@ local function castAndTrack(spell, cp)
     F_.lastFFTime = now
   elseif spell == "Tiger's Fury" then
     F_.lastTFTime = now
+    F_.tfPendingAt = now      -- checkTFLanded: did the buff show up?
   elseif spell == "Maul" then
     F_.lastMaulTime = now
   elseif spell == "Demoralizing Roar" then
@@ -1085,6 +1186,13 @@ local function tryBossConsumables(inCat, power, pts)
   local now = GetTime()
   if now - F_.lastConsumableTry < 1.0 then return end     -- bag scans are not free
   F_.lastConsumableTry = now
+  -- 1.16.7: in cat every one of these is a buff, and on a full bar it would
+  -- not land - the potion, the juju or the trinket cooldown would be wasted.
+  -- (Bear keeps the potion: its rage arrives either way.)
+  if inCat and countPlayerBuffs() >= BUFF_CAP then
+    warnBuffBarFull("boss potion / juju / trinket held: their buffs would not land")
+    return
+  end
 
   local tfUp = (not F_.useTigersFury) or getTFRemaining() > 0
   if F_.useRagePot then
@@ -1169,13 +1277,46 @@ end
 -- BEFORE the GCD guard, like Maul and Savage Bite - the Kara10 log showed it
 -- waiting out the Reshift's 1.5s GCD every time. The two rotations still ask
 -- the same question as a fallback.
+-- 1.16.7: not while the buff bar is full (see BUFF CAP) - the cast would pay
+-- 30 energy for a buff that never appears.
 local function wantTigersFury(power, pts, ripFirst)
   if not F_.useTigersFury then return false end
   if power < (F_.costs["Tiger's Fury"] or 30) then return false end
   if getTFRemaining() > 0 then return false end
   if (GetTime() - F_.lastTFTime) <= 2 then return false end
+  if (F_.tfHoldUntil or 0) > GetTime() then return false end
+  if countPlayerBuffs() >= BUFF_CAP then
+    if UnitAffectingCombat("player") then warnBuffBarFull("Tiger's Fury cannot land, so it is not cast") end
+    return false
+  end
   if ripFirst and pts >= 5 and getRipRemaining() < F_.ripRefresh then return false end
   return true
+end
+
+-- The safety net for a cap the count cannot see (a buff the server holds but
+-- the bar does not show): a Tiger's Fury cast that has not put the buff up
+-- 1.5s later is a miss, and two misses in a row hold it for 10s. A Reshift
+-- in between knocks the buff off anyway, so that cast is not judged.
+-- Sampled from the TTD frame (10x/s), which runs with the HUD hidden too.
+local function checkTFLanded()
+  local at = F_.tfPendingAt
+  if not at then return end
+  if getTFRemaining() > 0 then
+    F_.tfPendingAt, F_.tfMisses = nil, 0
+    return
+  end
+  local now = GetTime()
+  if (F_.lastReshiftTime or 0) >= at then F_.tfPendingAt = nil; return end
+  if now - at < 1.5 then return end
+  F_.tfPendingAt = nil
+  F_.tfMisses = (F_.tfMisses or 0) + 1
+  local n = countPlayerBuffs()
+  trace("tf", string.format("Tiger's Fury cast %.1fs ago, no buff (miss %d, %d buffs)", now - at, F_.tfMisses, n))
+  if F_.tfMisses >= 2 then
+    F_.tfMisses = 0
+    F_.tfHoldUntil = now + 10
+    warnBuffBarFull("Tiger's Fury was cast twice without the buff showing up, held for 10s")
+  end
 end
 
 -- Cat priority (first match fires):
@@ -1966,6 +2107,11 @@ local function createHUD()
   F_.hud.specText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   F_.hud.specText:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -6)
 
+  -- 1.16.7: buffs on the player out of the 32 the server holds
+  F_.hud.buffText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  F_.hud.buffText:SetPoint("TOP", f, "TOP", 4, -6)
+  F_.hud.buffText:SetText("")
+
   local function addRow(yOff, labelStr, iconPath)
     local icon = f:CreateTexture(nil, "ARTWORK")
     icon:SetWidth(20)
@@ -2040,6 +2186,24 @@ local function createHUD()
     local power = UnitMana("player")
     local pts   = GetComboPoints()
     local isCat = isCatSpec(F_.spec)
+
+    -- Buff count: grey with room to spare, yellow at 29-30, orange at 31,
+    -- flashing red when full (nothing new lands, Tiger's Fury included)
+    local nBuffs = countPlayerBuffs()
+    local bCol
+    if nBuffs >= BUFF_CAP then
+      bCol = blink(3) and "|cFFFF3333" or "|cFFFFFFFF"
+    elseif nBuffs >= BUFF_CAP - 1 then
+      bCol = "|cFFFF8800"
+    elseif nBuffs >= BUFF_CAP - 3 then
+      bCol = "|cFFFFFF00"
+    else
+      bCol = "|cFF888888"
+    end
+    F_.hud.buffText:SetText(bCol .. "Buffs " .. nBuffs .. "/" .. BUFF_CAP .. "|r")
+    local tfBlocked = isCat and F_.useTigersFury and UnitAffectingCombat("player")
+                      and getTFRemaining() <= 0
+                      and (nBuffs >= BUFF_CAP or (F_.tfHoldUntil or 0) > GetTime())
 
     -- Timer rows
     if isCat then
@@ -2162,6 +2326,8 @@ local function createHUD()
       else
         F_.hud.ccAlert:SetText("|cFFFFFFFF!! CLEARCASTING !!|r")
       end
+    elseif tfBlocked then
+      F_.hud.ccAlert:SetText("|cFFFF8800BUFF BAR FULL - NO TIGER'S FURY|r")
     elseif npBlocked("Rip") then
       F_.hud.ccAlert:SetText("|cFFFF8800RIP NOT ON TARGET (debuff cap) - biting|r")
     else
@@ -2619,6 +2785,8 @@ function FeralDPS_OnLoad()
             .. (trinketReady(list[i].slot) and " (ready)" or " (on cooldown)"))
         end
       end
+    elseif cmd == "buffs" or cmd == "buff" then
+      printBuffs()
     elseif cmd == "enrageboss" then toggle("enrageBoss", "Bear: Enrage on bosses too (armor debuff!)")
 
     elseif cmd == "shift" then
@@ -2981,13 +3149,13 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps juju|r   — bosses: use Juju Flurry whenever it is ready (default off)")
       out("  |cFFFFFFFF/fdps trinket|r — bosses: on-use trinkets (Zandalarian Hero Medallion, Molten Emberstone...) with Tiger's Fury (default on)")
       out("  |cFFFFFFFF/fdps immune|r — list bleed-immune mobs; immune add <name>||target, immune clear <name>||all, immune known")
+      out("  |cFFFFFFFF/fdps buffs|r  — buffs on you out of the 32 that fit, the ones a cat can drop marked (the HUD shows the count)")
       out("  |cFFFFFFFF/fdps enrageboss|r — bear: allow Enrage on bosses too (default off)")
       out("  |cFFFFFFFF/fdps reshift|r — Reshift (OctoWoW powershift: empties the bar, sets it to 60) when nearly out of energy; energy/reserve/cost <n> to tune")
       out("  |cFFFFFFFF/fdps shift|r  — old DruidBar powershifting")
       out("  |cFFFFFFFF/fdps talents|r — print your talent ranks")
       out("  |cFFFFFFFF/fdps chat <tab>|r — send addon text to a chat tab (|cFFFFFFFF/fdps chat|r = general)")
       out("  |cFFFFFFFF/fdps trace|r  — log every press/cast/error with timestamps (|cFFFFFFFFtrace show [n]|r, |cFFFFFFFFtrace clear|r)")
-      out("  |cFFFFFFFF/fdps immune|r — learned bleed immunities (|cFFFFFFFFimmune clear <name>|r forgets one)")
       out("  |cFFFFFFFF/fdps hudreset|r — put the HUD back where it started (it remembers where you drag it)")
       out("  |cFFFFFFFF/fdps show|r / |cFFFFFFFFhide|r — the HUD (hide is remembered across logins)")
       out("  |cFFFFFFFF/fdps debug|r / |cFFFFFFFFreload|r")
@@ -3353,6 +3521,7 @@ function FeralDPS_OnLoad()
       F_.bossThisFight = false        -- idol swap: a new fight starts on the trash idol
       F_.reshiftNoGain = 0            -- a new fight gets a fresh try
       F_.reshiftHoldUntil = 0
+      F_.tfMisses, F_.tfHoldUntil = 0, 0
     elseif F_.fightStart then
       table.insert(F_.recentFights, GetTime() - F_.fightStart)
       while table.getn(F_.recentFights) > 5 do table.remove(F_.recentFights, 1) end
@@ -3366,6 +3535,7 @@ function FeralDPS_OnLoad()
     if (this.tick or 0) > GetTime() then return end
     this.tick = GetTime() + 0.1
     sampleTTD()
+    checkTFLanded()
     -- What a Reshift pays: the first jump of 30+ energy inside 1.5s of the
     -- press (a regen tick is 20, Furor alone 40, with the head enchant 60).
     -- Sets the energy ceiling for the next one unless it was set by hand.
@@ -3537,7 +3707,7 @@ function FeralDPS_OnLoad()
         if attempt == "Rip" then F_.lastRipTime = 0; F_.ripAttemptVoid = true   -- and says nothing about immunity
         elseif attempt == "Rake" then F_.lastRakeTime = 0
         elseif attempt == "Faerie Fire (Feral)" then F_.lastFFTime = 0
-        elseif attempt == "Tiger's Fury" then F_.lastTFTime = 0
+        elseif attempt == "Tiger's Fury" then F_.lastTFTime = 0; F_.tfPendingAt = nil   -- refused: not a miss
         elseif attempt == "Demoralizing Roar" then F_.lastDemoTime = 0
         elseif attempt == "Maul" then F_.lastMaulTime = 0
         elseif attempt == "Reshift" then
