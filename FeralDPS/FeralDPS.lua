@@ -100,6 +100,8 @@ local F_ = {
   useRagePot    = false,  -- /fdps pot: Mighty Rage Potion on bosses, timed for the Rip snapshot
   useJuju       = false,  -- /fdps juju: Juju Flurry on bosses whenever it is ready
   useTrinkets   = true,   -- /fdps trinket: on-use trinkets (Zandalarian Hero Medallion, ...) on bosses
+  trimBuffs     = false,  -- /fdps trim: remove the buffs on trimList while in Cat Form (1.16.8)
+  trimList      = nil,    -- names; TRIM_DEFAULT until changed with /fdps trim add|remove
   lastConsumableTry = 0, lastPotUse = 0, potWarned = false, jujuWarned = false,
   enrageBoss    = false,  -- bear: allow Enrage on bosses too (armor debuff!)
   lastEnrageTime = 0,
@@ -362,7 +364,7 @@ local function debuffBarFull()
 end
 
 -- ============================================================
--- BUFF CAP (1.16.7)
+-- BUFF CAP (1.16.7, trim 1.16.8)
 -- ============================================================
 -- The PLAYER has a cap too: 32 buffs. A fully buffed raid cat (six
 -- blessings, totems, flask, elixirs, food, Zanza, jujus, tracking...) sits at
@@ -438,6 +440,7 @@ local function warnBuffBarFull(what)
   else
     hint = " Right-click off a buff a cat does not need (tracking, Spirit, Blessing of Light/Sanctuary...)."
   end
+  if not F_.trimBuffs then hint = hint .. " |cFFFFFFFF/fdps trim|r removes Spirit and Sanctuary for you." end
   local head = (n >= BUFF_CAP) and ("buff bar full (" .. n .. "/" .. BUFF_CAP .. ")")
                or ("buff bar probably full (" .. n .. "/" .. BUFF_CAP .. " shown)")
   out("|cFFFFD700FeralDPS|r: |cFFFF8800" .. head .. "|r - " .. what .. "." .. hint)
@@ -1293,6 +1296,56 @@ local function wantTigersFury(power, pts, ripFirst)
   return true
 end
 
+-- /fdps trim (1.16.8): removes the buffs on the trim list while in Cat
+-- Form, the way LazyPig removes Salvation for tanks - on the client's own
+-- aura-change event, with CancelPlayerBuff; nothing is cast or pressed.
+-- Caster form keeps them (a druid who heals wants Spirit), and so does bear
+-- (Sanctuary takes 24 off every hit on a tank; no Tiger's Fury there). The default list
+-- is Prayer of Spirit / Divine Spirit and (Greater) Blessing of Sanctuary: a
+-- cat gets nothing from them, and each holds one of the 32 slots Tiger's
+-- Fury needs. Wisdom and Intellect stay: they pay for Reshifts.
+-- (LazyPig's own "remove mana buffs" takes Wisdom and Intellect too.)
+local TRIM_DEFAULT = { "Prayer of Spirit", "Divine Spirit", "Greater Blessing of Sanctuary", "Blessing of Sanctuary" }
+
+local function trimList()
+  if type(F_.trimList) ~= "table" then
+    F_.trimList = {}
+    for i = 1, table.getn(TRIM_DEFAULT) do F_.trimList[i] = TRIM_DEFAULT[i] end
+  end
+  return F_.trimList
+end
+
+local function onTrimList(name)
+  if not name then return false end
+  local l, list = string.lower(name), trimList()
+  for i = 1, table.getn(list) do
+    if string.lower(list[i]) == l then return true, i end
+  end
+  return false
+end
+
+-- One buff per pass: the buff indices shift after a cancel, and the cancel
+-- fires PLAYER_AURAS_CHANGED again for the next one.
+local function trimBuffsNow()
+  if not F_.trimBuffs then return false end
+  local cur = resolveForms()
+  if cur == 0 or cur ~= F_.catIndex then return false end
+  for i = 0, 63 do
+    local id = GetPlayerBuff(i, "HELPFUL")
+    if not id or id < 0 then break end
+    local name = playerBuffName(id)
+    if onTrimList(name) then
+      CancelPlayerBuff(id)
+      trace("buffs", "trim: removed " .. name)
+      if UIErrorsFrame and UIErrorsFrame.AddMessage then
+        UIErrorsFrame:AddMessage(name .. " removed (FeralDPS trim)", 1.0, 0.82, 0.0)
+      end
+      return true
+    end
+  end
+  return false
+end
+
 -- The safety net for a cap the count cannot see (a buff the server holds but
 -- the bar does not show): a Tiger's Fury cast that has not put the buff up
 -- 1.5s later is a miss, and two misses in a row hold it for 10s. A Reshift
@@ -2064,6 +2117,46 @@ end
 
 local saveSettings   -- defined in the INIT section below
 
+-- /fdps trim [add <name> | remove <name> | reset]
+local function trimCommand(rest)
+  local _, _, sub, name = string.find(rest or "", "^(%S*)%s*(.-)%s*$")
+  sub = string.lower(sub or "")
+  local list = trimList()
+  local tag = "|cFFFFD700FeralDPS|r: "
+  if sub == "add" and name ~= "" then
+    if onTrimList(name) then
+      out(tag .. name .. " is already on the trim list.")
+    else
+      table.insert(list, name)
+      out(tag .. "|cFFFFFFFF" .. name .. "|r added to the trim list (the exact name the buff tooltip shows).")
+    end
+    F_.trimDirty = true
+  elseif (sub == "remove" or sub == "del") and name ~= "" then
+    local found, i = onTrimList(name)
+    if found then
+      table.remove(list, i)
+      out(tag .. "|cFFFFFFFF" .. name .. "|r taken off the trim list.")
+    else
+      out(tag .. name .. " is not on the trim list.")
+    end
+  elseif sub == "reset" then
+    F_.trimList = nil
+    list = trimList()
+    out(tag .. "trim list back to the default.")
+    F_.trimDirty = true
+  elseif sub == "" then
+    F_.trimBuffs = not F_.trimBuffs
+    F_.trimDirty = F_.trimBuffs
+    out(tag .. "remove the trim-list buffs in Cat Form: "
+      .. (F_.trimBuffs and "|cFF00FF00ON|r" or "|cFFFF4444OFF|r"))
+  else
+    out(tag .. "/fdps trim  |  trim add <buff name>  |  trim remove <buff name>  |  trim reset")
+  end
+  saveSettings()
+  out("  Trim list" .. (F_.trimBuffs and "" or " (|cFFFF4444off|r - /fdps trim turns it on)")
+    .. ": |cFFFFFFFF" .. table.concat(list, ", ") .. "|r")
+end
+
 -- The HUD stays where it was dragged: its screen position is saved with the
 -- settings when the drag ends and applied again at login. /fdps hudreset
 -- puts it back at the default spot.
@@ -2375,6 +2468,8 @@ saveSettings = function()
     useRagePot    = F_.useRagePot,
     useJuju       = F_.useJuju,
     useTrinkets   = F_.useTrinkets,
+    trimBuffs     = F_.trimBuffs,
+    trimList      = F_.trimList,
     enrageBoss    = F_.enrageBoss,
     hudPos        = F_.hudPos,
     hudHidden     = F_.hudHidden,
@@ -2536,6 +2631,13 @@ local function feralInit()
     if FeralDPS_Settings.useRagePot    ~= nil then F_.useRagePot    = FeralDPS_Settings.useRagePot    end
     if FeralDPS_Settings.useJuju       ~= nil then F_.useJuju       = FeralDPS_Settings.useJuju       end
     if FeralDPS_Settings.useTrinkets   ~= nil then F_.useTrinkets   = FeralDPS_Settings.useTrinkets   end
+    if FeralDPS_Settings.trimBuffs     ~= nil then F_.trimBuffs     = FeralDPS_Settings.trimBuffs     end
+    if type(FeralDPS_Settings.trimList) == "table" then
+      F_.trimList = {}
+      for _, n in ipairs(FeralDPS_Settings.trimList) do
+        if type(n) == "string" and n ~= "" then table.insert(F_.trimList, n) end
+      end
+    end
     if FeralDPS_Settings.enrageBoss    ~= nil then F_.enrageBoss    = FeralDPS_Settings.enrageBoss    end
     if type(FeralDPS_Settings.trace) == "table" then F_.traceLog = FeralDPS_Settings.trace end
     if FeralDPS_Settings.traceOn then
@@ -2787,6 +2889,8 @@ function FeralDPS_OnLoad()
       end
     elseif cmd == "buffs" or cmd == "buff" then
       printBuffs()
+    elseif cmd == "trim" then
+      trimCommand(rest)
     elseif cmd == "enrageboss" then toggle("enrageBoss", "Bear: Enrage on bosses too (armor debuff!)")
 
     elseif cmd == "shift" then
@@ -3150,6 +3254,7 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps trinket|r — bosses: on-use trinkets (Zandalarian Hero Medallion, Molten Emberstone...) with Tiger's Fury (default on)")
       out("  |cFFFFFFFF/fdps immune|r — list bleed-immune mobs; immune add <name>||target, immune clear <name>||all, immune known")
       out("  |cFFFFFFFF/fdps buffs|r  — buffs on you out of the 32 that fit, the ones a cat can drop marked (the HUD shows the count)")
+      out("  |cFFFFFFFF/fdps trim|r   — remove Prayer of Spirit and Blessing of Sanctuary in Cat Form, like LazyPig's Salvation remover (default off); trim add||remove <buff>, trim reset")
       out("  |cFFFFFFFF/fdps enrageboss|r — bear: allow Enrage on bosses too (default off)")
       out("  |cFFFFFFFF/fdps reshift|r — Reshift (OctoWoW powershift: empties the bar, sets it to 60) when nearly out of energy; energy/reserve/cost <n> to tune")
       out("  |cFFFFFFFF/fdps shift|r  — old DruidBar powershifting")
@@ -3529,6 +3634,12 @@ function FeralDPS_OnLoad()
     end
   end)
 
+  -- /fdps trim: watch the player's buffs and form changes (see trimBuffsNow)
+  local trimFrame = CreateFrame("Frame", "FeralDPSTrimFrame")
+  trimFrame:RegisterEvent("PLAYER_AURAS_CHANGED")
+  trimFrame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+  trimFrame:SetScript("OnEvent", function() if F_.trimBuffs then F_.trimDirty = true end end)
+
   -- Time-to-die sampler: its own frame, so it keeps running with the HUD hidden
   local ttdFrame = CreateFrame("Frame", "FeralDPSTTDFrame")
   ttdFrame:SetScript("OnUpdate", function()
@@ -3536,6 +3647,12 @@ function FeralDPS_OnLoad()
     this.tick = GetTime() + 0.1
     sampleTTD()
     checkTFLanded()
+    -- /fdps trim: an aura change marks the bar dirty; the tooltip scan runs
+    -- at most once a second
+    if F_.trimDirty and (GetTime() - (F_.trimAt or 0)) >= 1.0 then
+      F_.trimDirty, F_.trimAt = false, GetTime()
+      trimBuffsNow()
+    end
     -- What a Reshift pays: the first jump of 30+ energy inside 1.5s of the
     -- press (a regen tick is 20, Furor alone 40, with the head enchant 60).
     -- Sets the energy ceiling for the next one unless it was set by hand.
