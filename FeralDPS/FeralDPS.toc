@@ -2,7 +2,7 @@
 ## Title: FeralDPS
 ## Notes: Feral druid rotation optimizer (cat + bear) for TurtleWoW
 ## Author: Claude
-## Version: 1.16.8
+## Version: 1.16.9
 ## SavedVariables: FeralDPS_Settings
 
 FeralDPS.xml

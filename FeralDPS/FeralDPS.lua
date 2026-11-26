@@ -2817,6 +2817,35 @@ local function feralInit()
   saveSettings()     -- the version stamp and any migration above are kept
 end
 
+-- Lua 5.0 (the 1.12 client) caps a function at 60 upvalues, and
+-- FeralDPS_OnLoad holds everything that runs after login, so it counts every
+-- file-level local that it or any of its closures touch. 1.16.8 reached 61
+-- and the whole file stopped loading (FeralTrack: "FeralDPS not found").
+-- Helpers used only once in there are reached through this one table, which
+-- costs a single upvalue. New code inside FeralDPS_OnLoad goes through X too.
+local X = {
+  printBuffs = printBuffs,
+  trimCommand = trimCommand,
+  checkTFLanded = checkTFLanded,
+  trimBuffsNow = trimBuffsNow,
+  getRipRemaining = getRipRemaining,
+  getRakeRemaining = getRakeRemaining,
+  getFFRemaining = getFFRemaining,
+  getDemoRemaining = getDemoRemaining,
+  isClearcasting = isClearcasting,
+  hasSuperWoW = hasSuperWoW,
+  isBehindTarget = isBehindTarget,
+  getTTD = getTTD,
+  targetWorthRipping = targetWorthRipping,
+  isQueuedOnBar = isQueuedOnBar,
+  spellReady = spellReady,
+  getTFRemaining = getTFRemaining,
+  getShiftMana = getShiftMana,
+  reshiftWhy = reshiftWhy,
+  energyTickIn = energyTickIn,
+  npDebuffSlotsUsed = npDebuffSlotsUsed,
+}
+
 -- ============================================================
 -- ADDON ENTRY POINT (called from FeralDPS.xml OnLoad)
 -- ============================================================
@@ -2831,7 +2860,24 @@ function FeralDPS_OnLoad()
     announce("|cFFFFD700FeralDPS|r: " .. label .. " " .. state)
   end
 
+  -- The big command handler sits at Lua 5.0's limit of 32 upvalues (1.16.7
+  -- and 1.16.8 went over it and the whole file failed to load), so newer
+  -- commands are dispatched here, in front of it, and the handler itself
+  -- must not get any new references to file-level locals.
+  local mainSlash
   SlashCmdList["FDPS"] = function(subcmd)
+    local _, _, word, rest = string.find(subcmd or "", "^%s*(%S*)%s*(.-)%s*$")
+    local cmd = string.lower(word or "")
+    if cmd == "buffs" or cmd == "buff" then
+      X.printBuffs()
+    elseif cmd == "trim" then
+      X.trimCommand(rest)
+    else
+      mainSlash(subcmd)
+    end
+  end
+
+  mainSlash = function(subcmd)
     local raw = subcmd or ""
     local _, _, word, rest = string.find(raw, "^%s*(%S*)%s*(.-)%s*$")
     local cmd = string.lower(word or "")
@@ -2887,10 +2933,6 @@ function FeralDPS_OnLoad()
             .. (trinketReady(list[i].slot) and " (ready)" or " (on cooldown)"))
         end
       end
-    elseif cmd == "buffs" or cmd == "buff" then
-      printBuffs()
-    elseif cmd == "trim" then
-      trimCommand(rest)
     elseif cmd == "enrageboss" then toggle("enrageBoss", "Bear: Enrage on bosses too (armor debuff!)")
 
     elseif cmd == "shift" then
@@ -3137,15 +3179,15 @@ function FeralDPS_OnLoad()
         tostring(F_.catIndex), tostring(F_.bearIndex)))
       out(string.format(
         "  Rip=%.1fs  Rake=%.1fs  FF=%.1fs  Demo=%.1fs  Clearcast=%s",
-        getRipRemaining(), getRakeRemaining(), getFFRemaining(), getDemoRemaining(),
-        tostring(isClearcasting())))
-      out("  SuperWoW (UnitXP): " .. (hasSuperWoW() and "|cFF00FF00loaded|r" or "|cFFFF4444MISSING - behind check disabled, assuming behind|r"))
+        X.getRipRemaining(), X.getRakeRemaining(), X.getFFRemaining(), X.getDemoRemaining(),
+        tostring(X.isClearcasting())))
+      out("  SuperWoW (UnitXP): " .. (X.hasSuperWoW() and "|cFF00FF00loaded|r" or "|cFFFF4444MISSING - behind check disabled, assuming behind|r"))
       do
         local ok, v = pcall(UnitXP, "behind", "player", "target")
         out("  UnitXP raw: ok=" .. tostring(ok) .. " value=" .. tostring(v)
           .. "   target=" .. tostring(UnitName("target")))
       end
-      out("  Behind target: " .. tostring(isBehindTarget())
+      out("  Behind target: " .. tostring(X.isBehindTarget())
         .. "   ClawBleeds: " .. tostring(F_.clawBleeds))
       local imm = ""
       for n, t in pairs(F_.immune) do
@@ -3156,15 +3198,15 @@ function FeralDPS_OnLoad()
         .. "   last Rip tick " .. (F_.lastRipTickTime > 0 and string.format("%.1fs ago", GetTime() - F_.lastRipTickTime) or "never"))
       out("  Rip ticks seen: " .. F_.ripTicks .. "/" .. F_.ripTickCount
         .. "   Rake ticks seen: " .. F_.rakeTicks .. "/" .. F_.rakeTickCount)
-      local ttd = getTTD()
+      local ttd = X.getTTD()
       out("  Time to die: " .. (ttd and string.format("%.1fs", ttd) or "unknown")
-        .. "   Target worth Rip: " .. tostring(targetWorthRipping(5))
+        .. "   Target worth Rip: " .. tostring(X.targetWorthRipping(5))
         .. "   Boss: " .. tostring(isBoss()))
-      out("  Maul queued: " .. tostring(isQueuedOnBar("ability_druid_maul")))
+      out("  Maul queued: " .. tostring(X.isQueuedOnBar("ability_druid_maul")))
       out("  Berserk: auto=" .. tostring(F_.useBerserk)
-        .. "  ready=" .. tostring(spellReady("Berserk"))
-        .. "  TigersFury " .. string.format("%.1fs left (exact)", getTFRemaining()))
-      local mana, cost = getShiftMana()
+        .. "  ready=" .. tostring(X.spellReady("Berserk"))
+        .. "  TigersFury " .. string.format("%.1fs left (exact)", X.getTFRemaining()))
+      local mana, cost = X.getShiftMana()
       out("  DruidBar mana/shift cost: "
         .. tostring(mana) .. " / " .. tostring(cost))
       do
@@ -3173,17 +3215,17 @@ function FeralDPS_OnLoad()
           .. "  sets the bar to " .. tostring(F_.reshiftGain or "?") .. "  used at or below " .. F_.reshiftEnergy .. (F_.reshiftEnergyManual and " (pinned)" or "")
           .. "  mana " .. tostring(mana) .. "/" .. tostring(max) .. "  Furor " .. F_.furorRank .. "/5"
           .. "  in book: " .. tostring(F_.book and F_.book["Reshift"] ~= nil)
-          .. "  would fire now: " .. tostring(reshiftWhy(UnitMana("player")) or "yes"))
+          .. "  would fire now: " .. tostring(X.reshiftWhy(UnitMana("player")) or "yes"))
       end
       do
-        local t = energyTickIn()
+        local t = X.energyTickIn()
         out("  Energy tick: " .. (t and string.format("next in %.1fs (+%d)", t, F_.energyTickSize) or "not seen lately (bar full or out of form)")
           .. "   Relic: " .. tostring(F_.relic) .. " (Claw " .. F_.costs["Claw"] .. ", Rake " .. F_.costs["Rake"] .. " energy)")
       end
       out("  Rip ticks seen this session: " .. tostring(F_.ticksSeen or 0)
         .. "  (0 after a boss fight means the combat log is not showing bleed ticks)")
       if F_.np.live then
-        local slots = npDebuffSlotsUsed()
+        local slots = X.npDebuffSlotsUsed()
         local ripById = npAuraOnTarget("Rip")
         out("  Nampower " .. F_.np.version .. ": visible debuff slots " .. tostring(slots) .. "/16"
           .. " (server cap 40: the 17th and up are on but invisible)"
@@ -3646,12 +3688,12 @@ function FeralDPS_OnLoad()
     if (this.tick or 0) > GetTime() then return end
     this.tick = GetTime() + 0.1
     sampleTTD()
-    checkTFLanded()
+    X.checkTFLanded()
     -- /fdps trim: an aura change marks the bar dirty; the tooltip scan runs
     -- at most once a second
     if F_.trimDirty and (GetTime() - (F_.trimAt or 0)) >= 1.0 then
       F_.trimDirty, F_.trimAt = false, GetTime()
-      trimBuffsNow()
+      X.trimBuffsNow()
     end
     -- What a Reshift pays: the first jump of 30+ energy inside 1.5s of the
     -- press (a regen tick is 20, Furor alone 40, with the head enchant 60).

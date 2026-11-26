@@ -76,4 +76,6 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.8`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.9`).
+
+The 1.12 client runs Lua 5.0, where one function can reach at most 60 upvalues (file-level locals it or its inner functions use). `FeralDPS_OnLoad` holds every event handler and the slash commands, so it is the one that fills up: 1.16.8 reached 61 and did not load at all. Helpers that are only used in there go through the `X` table (one upvalue for all of them). Before a release, compile the file with a Lua 5.0 `luac -p` or `loadfile`; a newer Lua does not catch this.
