@@ -6,7 +6,16 @@ Every press of the key does exactly one thing - the next ability in the priority
 
 ## Install
 
-Copy `FeralDPS` and `FeralTrack` into `Interface\AddOns\` (the repo root is laid out so you can also clone it straight on top of the AddOns folder). Restart the client once; afterwards `/reload` is enough for updates.
+Copy the two folders `FeralDPS` and `FeralTrack` into `Interface\AddOns\` (the repo root is laid out so you can also clone it straight on top of the AddOns folder). Restart the client once; afterwards `/reload` is enough for updates.
+
+The result must look like this - the folder name has to match the `.toc` name, or WoW skips the addon without a word:
+
+```
+Interface\AddOns\FeralDPS\FeralDPS.toc
+Interface\AddOns\FeralTrack\FeralTrack.toc
+```
+
+If you downloaded the zip from GitHub, do **not** copy the `FeralDPS-main` folder itself - open it and copy the two folders inside. Then check that FeralDPS is ticked in the AddOns list at character select, and type `/fdps help` in game: if the command list shows up, the addon is loaded.
 
 Put the rotation on a key:
 
@@ -23,7 +32,12 @@ Priority, first match fires: Ravage/Pounce from Prowl, Faerie Fire (Feral) when 
 
 The OctoWoW-specific parts, all read from the talent tree at login:
 
-- **Carnage 2/2** - a 5-point Bite refreshes Rip and Rake for certain, so Rip is cast once and kept alive by Bites. The two Rip/Rake timers are reset on every 5-point Bite.
+- **Carnage 2/2** - a 5-point Bite refreshes Rip and Rake for certain, so Rip is cast once and kept alive by Bites. The two Rip/Rake timers are reset on every 5-point Bite that lands; a Bite that is dodged, parried, missed or refused puts them back. FeralTrack's "Carnage refreshes" counts the Bites once a Rip tick proves them: Rip still ticking after the moment it would have run out on its own.
+- **Clearcasting** - a proc makes the next ability free whatever it costs, so from behind it goes to Shred (48) first instead of the Bite, Rake or Rip that happened to be next (30-35). Not at 5 points when Rip is missing or has 3 s or less left.
+- **Several ferals** - your own Rip and Rake are remembered per target. Another cat's Rip on the mob you switch to is not taken for yours, and back on a boss with a full debuff bar your timers are where you left them.
+- **Lucifron's Curse** doubles every cost while it is on you. The rotation waits for the real price instead of pressing into "Not enough energy", holds Reshift, and the HUD says so - ask for a decurse.
+- **`/fdps farm` on a ?? boss** plays the full cat rotation (Rip, Faerie Fire, boss rules) and says so once; the saved spec is not changed.
+- **Boss potion and juju** (`/fdps pot`, `/fdps juju`) are only counted and announced once their cooldown is seen running. One the game refuses (Mighty Rage on Vaelastrasz) is left alone for 20 s.
 - **Reshift** (OctoWoW's one-press powershift) refills the energy bar when it runs dry. It is only pressed when it is worth at least 20 energy net: what it pays (measured from the bar on the first use - Furor's 40 plus a head enchant, if any) minus what is in the bar minus a Tiger's Fury recast if TF has more than 3 s left. Never without the mana for it, and mana is held back on raid trash. With Judgement of Wisdom (or Moonfang) feeding 300+ mana per 15 s, the mana reserve drops to a single shift's worth, since the next one is already paid for.
 - **Tiger's Fury** has no global cooldown on this server and is fired outside the GCD guard, so it goes out the moment it is wanted - including right after a Reshift.
 - **Cenarion Harness** - the pieces on are counted by name; with 5 the Tiger's Fury cost is 25, which the energy check and the Reshift net rule both use.
@@ -54,6 +68,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps idol` | Idol swap on the press (off by default) and the three idols it uses; `idol boss <name>`, `idol trash <name>`, `idol immune <name>` pick them |
 | `/fdps enrage`, `enrageboss` | Bear: Enrage when rage-starved on trash / also on bosses |
 | `/fdps pull` | Allow acting on unpulled mobs while in combat (chain-pulling in bear) |
+| `/fdps step` | Cat, off by default: a press the game refuses as "Out of range" takes ONE short step forward (0.3 s, about 2 yd) - only when your auto attacks hit the same target in the last 6 s, you are behind it, and you are at most 3 yd further back than where you hit from. At most one step per 1.5 s; a step that does not bring you closer pauses it for 10 s. Needs UnitXP_SP3. It cannot see fire on the ground: turn it off where you step out of things |
 | `/fdps chat <tab>` | Route all output (FeralTrack too) to a chat tab |
 | `/fdps talents` | What the client reports for the talent tree and the costs derived from it |
 | `/fdps trace` | Log every press, decision, cast and client error (`/fdps trace show`, `clear`) |
@@ -70,12 +85,24 @@ Per run and per fight: uptime of Rip, Rake, Tiger's Fury and Faerie Fire as a sh
 
 ## Requirements
 
-- OctoWoW client (1.12). Written for its Lua 5.0 and its custom spells (Reshift, Berserk, Carnage, Open Wounds, Ancient Brutality, Blood Frenzy).
-- **Nampower** (optional, strongly recommended): debuffs by spell id, bleed ticks, energize events and mana while shifted. Without it the addon falls back to the chat combat log and cannot read mana in cat form, so Reshift stays off.
-- **UnitXP (SuperWoW)** (optional): behind-target detection, which decides Shred vs Claw. Without it the rotation assumes you are behind.
+FeralDPS and FeralTrack need **nothing but the OctoWoW client** to load and run. There are no library or addon dependencies. The two client mods below are optional and only add information the 1.12 client does not give:
+
+| | Needed for | Without it |
+|---|---|---|
+| OctoWoW client (1.12) | Everything. Written for its Lua 5.0 and its custom spells (Reshift, Berserk, Carnage, Open Wounds, Ancient Brutality, Blood Frenzy) | - |
+| **Nampower** (strongly recommended) | Debuffs by spell id, bleed ticks, energize events, mana while shifted - Rip/Rake tracking in raids where the 16 visible debuff slots are full | Falls back to the chat combat log; cannot read mana in cat form, so **Reshift stays off** |
+| **UnitXP_SP3** (dll + `UnitXP_SP3_Addon`) | Behind-target detection (Shred vs Claw), distances, per-target bleed memory, `/fdps step` | Assumes you are behind; `/fdps step` does nothing. The HUD says "FRONTING" all the time if the dll is missing or was removed by antivirus |
+
+## Troubleshooting
+
+- **The macro does nothing** - the addon is not loaded. Check the folder layout under *Install* (a `FeralDPS-main` folder will not load) and that it is enabled at character select. `/fdps help` must print the command list.
+- **Loaded, but nothing happens on a press** - you need an enemy targeted; out of combat the addon never picks a target for you. Type `/fdps trace`, press the key a few times, then `/fdps trace show`: every press says what it decided or why it waited.
+- **More presses are fine** - every press is checked against the global cooldown, so spamming or holding the key never double-casts; it only reacts sooner when energy or the GCD comes back.
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.9`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.10`).
+
+Changing the addon: read `DEVELOPMENT.md` first.
 
 The 1.12 client runs Lua 5.0, where one function can reach at most 60 upvalues (file-level locals it or its inner functions use). `FeralDPS_OnLoad` holds every event handler and the slash commands, so it is the one that fills up: 1.16.8 reached 61 and did not load at all. Helpers that are only used in there go through the `X` table (one upvalue for all of them). Before a release, compile the file with a Lua 5.0 `luac -p` or `loadfile`; a newer Lua does not catch this.

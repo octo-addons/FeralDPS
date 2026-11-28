@@ -649,6 +649,7 @@ local function onCastFailed(spell, msg)
   elseif string.find(m, "line of sight") then why = "los"
   elseif string.find(m, "stunned") or string.find(m, "feared") or string.find(m, "can't do that while") then why = "stunned/feared"
   elseif string.find(m, "facing")     then why = "facing"
+  elseif string.find(m, "not enough mana") then why = "no mana"       -- 1.7.6: Reshift, not an energy problem
   elseif string.find(m, "not enough") then why = "no energy"
   elseif string.find(m, "moving")     then why = "moving"
   elseif string.find(m, "combo point") then why = "no cp"
@@ -661,7 +662,12 @@ local function onCastFailed(spell, msg)
     -- keep the wording of messages this list does not know, so it can learn them
     run.failOther = run.failOther or {}
     local key = string.sub(tostring(msg), 1, 40)
-    if run.failOther[key] or sumTable(run.failOther) < 12 then
+    -- 1.7.6: up to 12 DIFFERENT messages are kept (it used to stop taking new
+    -- ones after 12 lines in total, so a message first seen late in a raid
+    -- was lost - 185 unnamed "other" refusals on Nefarian, 25/11)
+    local kinds = 0
+    for _ in pairs(run.failOther) do kinds = kinds + 1 end
+    if run.failOther[key] or kinds < 12 then
       run.failOther[key] = (run.failOther[key] or 0) + 1
     end
   end

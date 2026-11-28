@@ -2,7 +2,7 @@
 ## Title: FeralTrack
 ## Notes: Uptime and leak report for FeralDPS - what ShaguDPS does not show
 ## Author: Claude
-## Version: 1.7.5
+## Version: 1.7.6
 ## OptionalDeps: FeralDPS
 ## SavedVariables: FeralTrack_Settings
 
