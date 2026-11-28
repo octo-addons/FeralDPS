@@ -199,29 +199,14 @@ return function(addonPath, isNew)
     return string.format("%.1fs after the swap, Rip casts in 55s: %d", back, M.count("Rip"))
   end)
 
-  if isNew then
-    scenario("/fdps step: one short step, then stop", function()
-      local M, env, W, F = boot(addonPath)
-      M.press("step")
-      check(F.useStep == true, "step did not turn on")
-      run(M, 10)
-      M.fire("CHAT_MSG_COMBAT_SELF_HITS", "You hit Chromaggus for 300.")
-      check(F.meleeDist == 3, "melee distance not recorded: " .. tostring(F.meleeDist))
-      W.dist = 5.5; W.energy = 100
-      run(M, 1.0)
-      check(W.moved == 1, "steps taken in 1s: " .. W.moved)
-      check(W.moving == false, "still walking after the step")
-      W.dist = 12
-      run(M, 4)
-      check(W.moved <= 2, "kept stepping at 12 yd: " .. W.moved)
-      W.dist = 3; W.behind = false
-      return "1 step at 2.5 yd beyond reach, none at 9 yd beyond"
-    end)
-    scenario("/fdps step off: never moves", function()
-      local M, env, W, F = boot(addonPath)
-      run(M, 5); W.dist = 6.5; run(M, 5)
-      check(W.moved == 0, "moved with step off")
-    end)
-  end
+  scenario("the addon never moves the character (/fdps step is gone)", function()
+    local M, env, W, F = boot(addonPath)
+    M.press("step")
+    run(M, 10)
+    M.fire("CHAT_MSG_COMBAT_SELF_HITS", "You hit Chromaggus for 300.")
+    W.dist = 5.5; W.energy = 100
+    run(M, 5)
+    check(W.moved == 0, "MoveForwardStart was called " .. W.moved .. " time(s) - the client blocks that")
+  end)
   return table.concat(out, "\n")
 end

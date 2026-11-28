@@ -33,8 +33,6 @@
 --   /fdps reshift energy <n> / reserve <mana> / cost <mana>
 --   /fdps idol     - swap idols on the press: bleed idol normally, Moonfang on
 --                    bleed-immune targets (default off); idol bleed|immune <name>
---   /fdps step     - cat: a press refused as out of range takes one short step
---                    forward when you stand just behind melee reach (default off)
 --   /fdps show / hide / debug / reload / help
 
 FeralDPS = {}
@@ -169,8 +167,6 @@ local F_ = {
   byGuid           = {},  -- 1.16.10: our own Rip/Rake timers per target (see PLAYER_TARGET_CHANGED)
   curGuid          = nil,
   costFactor       = 1,   -- 1.16.10: 2 while Lucifron's Curse doubles every cost
-  useStep          = false, -- /fdps step (see STEP FORWARD)
-  stepAt = 0, stepStopAt = nil, stepBadUntil = 0, meleeAt = 0, meleeDist = nil, meleeTarget = nil,
   itemPending      = nil, -- a potion / juju that was pressed and is not confirmed yet (1.16.10)
   itemHold         = {},  -- item id -> time before which it is not pressed again
   itemUseAt        = 0,
@@ -1081,79 +1077,10 @@ local function undoCarnage(why)
   trace("carnage", "Bite " .. tostring(why) .. ": no Carnage refresh, Rip/Rake timers put back")
 end
 
--- ============================================================
--- STEP FORWARD (/fdps step, default off; first made in 1.15.31, back in 1.16.10)
--- A press that the client refuses with "Out of range." while you stand a
--- yard or two behind the spot you were just hitting from takes ONE short
--- step forward (0.3s of walking, about 2 yards in cat). It only happens on
--- your own press, never on its own, and only when ALL of these hold:
---   * in combat, cat, UnitXP loaded, no step in the last 1.5s
---   * your auto attacks hit (or missed) this same target in the last 6s -
---     you were in melee a moment ago, so you are facing it
---   * UnitXP says you are behind it (never walks you into a cleave or breath)
---   * you are at most 3 yards further away than when you last hit it -
---     anything further is taken as deliberate (fire, LOS, a kite phase)
--- A step that does not bring you closer pauses stepping for 10s. It cannot
--- see fire on the ground: turn it off where you step out of things.
--- ============================================================
-local function distToTarget()
-  if type(UnitXP) ~= "function" then return nil end
-  local ok, d = pcall(UnitXP, "distanceBetween", "player", "target")
-  if ok and type(d) == "number" then return d end
-  return nil
-end
-
-local function stopStep(why)
-  if not F_.stepStopAt then return end
-  F_.stepStopAt = nil
-  if type(MoveForwardStop) == "function" then MoveForwardStop() end
-  local d = distToTarget()
-  if F_.stepFrom and d and d > F_.stepFrom - 0.5 and UnitName("target") == F_.stepTarget then
-    F_.stepBadUntil = GetTime() + 10
-    trace("step", string.format("step did not bring us closer (%.1f -> %.1f yd): steps paused 10s", F_.stepFrom, d))
-  elseif why then
-    trace("step", "step stopped: " .. why)
-  end
-end
-
--- called from the step frame while a step is running
-local function stepTick()
-  if not F_.stepStopAt then return end
-  if not UnitExists("target") or UnitIsDead("target") or UnitName("target") ~= F_.stepTarget then
-    stopStep("target changed or died")
-  elseif GetTime() >= F_.stepStopAt then
-    stopStep()
-  end
-end
-
-local function tryStep(why)
-  if not F_.useStep or F_.stepStopAt then return end
-  if type(MoveForwardStart) ~= "function" or type(MoveForwardStop) ~= "function" then return end
-  if type(UnitXP) ~= "function" then return end
-  local now = GetTime()
-  if (now - F_.stepAt) < 1.5 or now < F_.stepBadUntil then return end
-  if not UnitAffectingCombat("player") then return end
-  local name = UnitName("target")
-  if not name or name ~= F_.meleeTarget or (now - F_.meleeAt) > 6 or not F_.meleeDist then
-    trace("step", "no step: not in melee with this target a moment ago")
-    return
-  end
-  local okB, behind = pcall(UnitXP, "behind", "player", "target")
-  if not (okB and behind == true) then
-    trace("step", "no step: not behind the target")
-    return
-  end
-  local d = distToTarget()
-  if not d then return end
-  local extra = d - F_.meleeDist
-  if extra > 3 then
-    trace("step", string.format("no step: %.1f yd further back than in melee (max 3)", extra))
-    return
-  end
-  F_.stepAt, F_.stepFrom, F_.stepTarget, F_.stepStopAt = now, d, name, now + 0.3
-  MoveForwardStart()
-  trace("step", string.format("step forward (%s; %.1f yd beyond the melee spot)", tostring(why), extra))
-end
+-- 1.16.11: /fdps step (one short step forward on an out-of-range press) is
+-- gone for good. The OctoWoW client does not let an addon move the character:
+-- MoveForwardStart() brings up "FeralDPS has been blocked from an action only
+-- available to the Blizzard UI" and nothing happens. Do not add it back.
 
 -- ============================================================
 -- ROTATION LOGIC
@@ -2333,15 +2260,9 @@ end
 
 local saveSettings   -- defined in the INIT section below
 
--- /fdps step
+-- /fdps step: removed in 1.16.11 (the client blocks addons from moving the character)
 local function stepCommand()
-  F_.useStep = not F_.useStep
-  saveSettings()
-  announce("|cFFFFD700FeralDPS|r: step forward on an out-of-range press (cat, just behind melee reach, max 3 yd) "
-    .. (F_.useStep and "|cFF00FF00on|r" or "|cFFFF4444off|r"))
-  if F_.useStep and type(UnitXP) ~= "function" then
-    out("  |cFFFF8800Note:|r it needs UnitXP_SP3 (distance and behind check) and does nothing without it.")
-  end
+  announce("|cFFFFD700FeralDPS|r: |cFFFFFFFF/fdps step|r is not possible on this client - it blocks addons from moving the character, so it was removed in 1.16.11.")
 end
 
 -- /fdps trim [add <name> | remove <name> | reset]
@@ -2703,7 +2624,6 @@ saveSettings = function()
     hudPos        = F_.hudPos,
     hudHidden     = F_.hudHidden,
     immuneSeed    = F_.immuneSeed,
-    useStep       = F_.useStep,
   }
   FeralDPS_Settings.trace   = F_.traceLog
   FeralDPS_Settings.traceOn = F_.trace
@@ -2867,7 +2787,6 @@ local function feralInit()
     if FeralDPS_Settings.useJuju       ~= nil then F_.useJuju       = FeralDPS_Settings.useJuju       end
     if FeralDPS_Settings.useTrinkets   ~= nil then F_.useTrinkets   = FeralDPS_Settings.useTrinkets   end
     if FeralDPS_Settings.trimBuffs     ~= nil then F_.trimBuffs     = FeralDPS_Settings.trimBuffs     end
-    if FeralDPS_Settings.useStep       ~= nil then F_.useStep       = FeralDPS_Settings.useStep       end
     if type(FeralDPS_Settings.trimList) == "table" then
       F_.trimList = {}
       for _, n in ipairs(FeralDPS_Settings.trimList) do
@@ -3081,9 +3000,6 @@ local X = {
   energyTickIn = energyTickIn,
   npDebuffSlotsUsed = npDebuffSlotsUsed,
   undoCarnage = undoCarnage,
-  distToTarget = distToTarget,
-  stepTick = stepTick,
-  tryStep = tryStep,
   stepCommand = stepCommand,
 }
 
@@ -3432,7 +3348,6 @@ function FeralDPS_OnLoad()
       end
       out("  Behind target: " .. tostring(X.isBehindTarget())
         .. "   ClawBleeds: " .. tostring(F_.clawBleeds)
-        .. "   Step: " .. tostring(F_.useStep)
         .. "   Cost factor: " .. tostring(F_.costFactor)
         .. "   Carnage proven: " .. tostring(F_.carnageRefreshes))
       local imm = ""
@@ -3543,7 +3458,6 @@ function FeralDPS_OnLoad()
       out("  |cFFFFFFFF/fdps immune|r — list bleed-immune mobs; immune add <name>||target, immune clear <name>||all, immune known")
       out("  |cFFFFFFFF/fdps buffs|r  — buffs on you out of the 32 that fit, the ones a cat can drop marked (the HUD shows the count)")
       out("  |cFFFFFFFF/fdps trim|r   — remove Prayer of Spirit and Blessing of Sanctuary in Cat Form, like LazyPig's Salvation remover (default off); trim add||remove <buff>, trim reset")
-      out("  |cFFFFFFFF/fdps step|r   — cat: a press refused as out of range takes ONE short step forward, only when you were in melee a moment ago, are behind the target and at most 3 yd further back (default off, needs UnitXP)")
       out("  |cFFFFFFFF/fdps enrageboss|r — bear: allow Enrage on bosses too (default off)")
       out("  |cFFFFFFFF/fdps reshift|r — Reshift (OctoWoW powershift: empties the bar, sets it to 60) when nearly out of energy; energy/reserve/cost <n> to tune")
       out("  |cFFFFFFFF/fdps shift|r  — old DruidBar powershifting")
@@ -3609,24 +3523,12 @@ function FeralDPS_OnLoad()
   log:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_DAMAGE")
   log:RegisterEvent("CHAT_MSG_SPELL_AURA_GONE_OTHER")
   log:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
-  log:RegisterEvent("CHAT_MSG_COMBAT_SELF_HITS")      -- /fdps step: where melee reach is
-  log:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
   log:SetScript("OnEvent", function()
     local msg = arg1
     if not msg then return end
     local tname = UnitName("target")
     if not tname then return end
     local now = GetTime()
-
-    -- An auto attack that hit or missed the target means we are in melee
-    -- reach right now: remember how far UnitXP measures that to be.
-    if event == "CHAT_MSG_COMBAT_SELF_HITS" or event == "CHAT_MSG_COMBAT_SELF_MISSES" then
-      if F_.useStep and not F_.stepStopAt and string.find(msg, tname, 1, true) then
-        local d = X.distToTarget()
-        if d then F_.meleeAt, F_.meleeDist, F_.meleeTarget = now, d, tname end
-      end
-      return
-    end
 
     -- "Your Rip failed. Chromaggus is immune."
     local _, _, spellI, whoI = string.find(msg, "^Your (.-) failed%. (.-) is immune%.$")
@@ -4212,9 +4114,6 @@ function FeralDPS_OnLoad()
               trace("target", string.format("%s is %.0f yd away: switched to %s", tostring(far), dist, tostring(UnitName("target"))))
             end
           end
-          -- /fdps step: still on the same target in cat -> maybe one short
-          -- step forward (every safety check is in tryStep)
-          if isCatSpec(F_.lastSpec) and UnitName("target") == far then X.tryStep(msg) end
         end
         if not mine then return end
         -- a Rip/Rake/FF that never went out must not sit on the HUD as "up"
@@ -4268,12 +4167,6 @@ function FeralDPS_OnLoad()
     -- shift and the Tiger's Fury pressed 50ms later (and then read 30).
     local w = F_.reshiftWatch
     if w and e > w.peak then w.peak = e; w.peakAt = GetTime() end
-  end)
-
-  -- /fdps step: stops the short step again (see STEP FORWARD)
-  local stepFrame = CreateFrame("Frame", "FeralDPSStepFrame")
-  stepFrame:SetScript("OnUpdate", function()
-    if F_.stepStopAt then X.stepTick() end
   end)
 
   local loader = CreateFrame("Frame", "FeralDPSLoader")

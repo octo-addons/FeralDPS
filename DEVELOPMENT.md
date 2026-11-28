@@ -35,7 +35,7 @@ Each of these fixed a problem that was measured in the raid logs. Keep them when
 | 1.16.10 | Lucifron's Curse doubles the cost table and holds Reshift (`COST_CURSES`, `curseFactor`, `F_.costFactor`) | `computeCosts`, `refreshCostFactor`, `reshiftWhy` |
 | 1.16.10 | `/fdps farm` on a ?? boss plays the cat rotation | `executeRotation`, `pickSpell` |
 | 1.16.10 | Clearcasting from behind goes to Shred before Bite/Rake (not when Rip is missing or has 3 s or less at 5 CP) | `nextSpell_Cat` |
-| 1.16.10 | `/fdps step` (off by default) | STEP FORWARD section, error handler |
+| 1.16.11 | **The addon never moves the character.** `/fdps step` was removed: the OctoWoW client blocks `MoveForwardStart()` from addons ("FeralDPS has been blocked from an action only available to the Blizzard UI"). Do not add movement, in any form | - |
 | 1.16.9 | `X` table to stay under the upvalue limit | above `FeralDPS_OnLoad` |
 | 1.16.7 | Tiger's Fury and boss items held on a full buff bar (32) | `wantTigersFury`, `tryBossConsumables` |
 | 1.16.1 | Shred from behind, not Claw, with both bleeds up (`/fdps claw` is off by default) | `nextSpell_Cat` |
@@ -53,10 +53,11 @@ There is no way to run the client from here, so every version is checked like th
 
 The stand-in is a model of the game, not the game. A pass is necessary, not sufficient.
 
-Open after 1.16.10: none of it has been through a raid yet. `/fdps step` has never been confirmed in game (does the character take the step?). Mighty Rage Potion is refused on Vaelastrasz for a reason that is not known. If Lucifron's Curse has another name on OctoWoW, change the one entry in `COST_CURSES`.
+Open after 1.16.11: none of the 1.16.10 changes has been through a raid yet. Mighty Rage Potion is refused on Vaelastrasz for a reason that is not known. If Lucifron's Curse has another name on OctoWoW, change the one entry in `COST_CURSES`.
 
 ## History
 
+- 1.16.11 (28 Nov 2026) - `/fdps step` removed: the client blocks addons from moving the character (popup on the first step). Everything else from 1.16.10 stays.
 - 1.16.10 (28 Nov 2026) - restores what 1.15.30/31 had (Carnage on landed Bites, Carnage counter, `/fdps step`, README install + troubleshooting); potion/juju confirmed by cooldown; error text no longer blamed on the wrong ability; Lucifron's Curse; farm on a boss plays cat; Clearcasting to Shred; bleeds per target. FeralTrack 1.7.6: "Not enough mana" is its own reason, up to 12 different unknown messages kept.
 - 1.16.9 - fix load failure (upvalue limit)
 - 1.16.8 - `/fdps trim`

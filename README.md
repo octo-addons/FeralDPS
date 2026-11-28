@@ -68,7 +68,6 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 | `/fdps idol` | Idol swap on the press (off by default) and the three idols it uses; `idol boss <name>`, `idol trash <name>`, `idol immune <name>` pick them |
 | `/fdps enrage`, `enrageboss` | Bear: Enrage when rage-starved on trash / also on bosses |
 | `/fdps pull` | Allow acting on unpulled mobs while in combat (chain-pulling in bear) |
-| `/fdps step` | Cat, off by default: a press the game refuses as "Out of range" takes ONE short step forward (0.3 s, about 2 yd) - only when your auto attacks hit the same target in the last 6 s, you are behind it, and you are at most 3 yd further back than where you hit from. At most one step per 1.5 s; a step that does not bring you closer pauses it for 10 s. Needs UnitXP_SP3. It cannot see fire on the ground: turn it off where you step out of things |
 | `/fdps chat <tab>` | Route all output (FeralTrack too) to a chat tab |
 | `/fdps talents` | What the client reports for the talent tree and the costs derived from it |
 | `/fdps trace` | Log every press, decision, cast and client error (`/fdps trace show`, `clear`) |
@@ -91,7 +90,7 @@ FeralDPS and FeralTrack need **nothing but the OctoWoW client** to load and run.
 |---|---|---|
 | OctoWoW client (1.12) | Everything. Written for its Lua 5.0 and its custom spells (Reshift, Berserk, Carnage, Open Wounds, Ancient Brutality, Blood Frenzy) | - |
 | **Nampower** (strongly recommended) | Debuffs by spell id, bleed ticks, energize events, mana while shifted - Rip/Rake tracking in raids where the 16 visible debuff slots are full | Falls back to the chat combat log; cannot read mana in cat form, so **Reshift stays off** |
-| **UnitXP_SP3** (dll + `UnitXP_SP3_Addon`) | Behind-target detection (Shred vs Claw), distances, per-target bleed memory, `/fdps step` | Assumes you are behind; `/fdps step` does nothing. The HUD says "FRONTING" all the time if the dll is missing or was removed by antivirus |
+| **UnitXP_SP3** (dll + `UnitXP_SP3_Addon`) | Behind-target detection (Shred vs Claw), distances, per-target bleed memory | Assumes you are behind. The HUD says "FRONTING" all the time if the dll is missing or was removed by antivirus |
 
 ## Troubleshooting
 
@@ -101,7 +100,7 @@ FeralDPS and FeralTrack need **nothing but the OctoWoW client** to load and run.
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.10`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.11`).
 
 Changing the addon: read `DEVELOPMENT.md` first.
 
