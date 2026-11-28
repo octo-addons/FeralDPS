@@ -208,5 +208,46 @@ return function(addonPath, isNew)
     run(M, 5)
     check(W.moved == 0, "MoveForwardStart was called " .. W.moved .. " time(s) - the client blocks that")
   end)
+  scenario("Tiger's Fury does not take the energy from a ready Bite (farm)", function()
+    local M, env, W, F = boot(addonPath)
+    W.zone, W.raid = "Winterspring", 0
+    M.setTarget("add")
+    M.press("farm"); M.step(0.1)
+    for i = #W.buffs, 1, -1 do table.remove(W.buffs, i) end      -- Tiger's Fury has run out
+    F.lastTFTime = 0
+    W.targets.add.hp = 300000                                   -- 30%: farm bites from 3 CP
+    W.cp, W.energy, W.gcdStart, W.gcdDur = 4, 44, 0, 0
+    local n = #W.casts
+    M.step(0.5); M.press("farm")
+    local seq = {}
+    for k = n + 1, #W.casts do seq[#seq + 1] = W.casts[k].spell end
+    check(seq[1] == "Ferocious Bite", "that press cast: " .. table.concat(seq, ", "))
+    return "Bite first; Tiger's Fury follows the Reshift"
+  end)
+
+  scenario("Tiger's Fury still goes out at the start of a fight and after a Reshift", function()
+    local M, env, W, F = boot(addonPath)
+    run(M, 60)
+    check(M.count("Tiger's Fury") >= 4, "Tiger's Fury casts in 60s: " .. M.count("Tiger's Fury"))
+    check(W.casts[1].spell == "Tiger's Fury", "first cast was " .. tostring(W.casts[1].spell))
+    return M.count("Tiger's Fury") .. " casts in 60s, " .. M.count("Reshift") .. " Reshifts"
+  end)
+
+  scenario("trace: a key held out of range does not fill the log", function()
+    local M, env, W, F = boot(addonPath)
+    M.press("trace")
+    W.dist, W.energy = 9, 100
+    local n0 = #F.traceLog
+    run(M, 3)
+    local storm = #F.traceLog - n0
+    W.dist = 3
+    run(M, 3)
+    local sawCast = false
+    for i = n0 + 1, #F.traceLog do if string.find(F.traceLog[i], "np       Rake landed") or string.find(F.traceLog[i], "cast     ") then sawCast = true end end
+    check(storm <= 12, storm .. " lines for 3s of refused presses")
+    check(sawCast, "the casts after the storm are missing from the log")
+    return storm .. " lines for 3s out of range"
+  end)
+
   return table.concat(out, "\n")
 end

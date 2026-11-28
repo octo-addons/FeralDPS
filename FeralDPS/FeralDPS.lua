@@ -261,17 +261,53 @@ local function trace(kind, text)
   text = text or ""
   local log = F_.traceLog
   local n = table.getn(log)
-  if kind == "press" and string.find(text, "^wait:") and F_.traceLastWait == text and n > 0 then
+  -- 1.16.12: a key held down out of range writes four lines per press
+  -- (decide, cast, error, FAILED) - 120 refused Rakes in 1.8s filled the
+  -- whole log and left 20 seconds of history. The same refusal again inside
+  -- a second is folded into the first one's line, and the decide/cast lines
+  -- of that refused press are taken back out.
+  local st = F_.traceErr
+  if kind == "error" then
+    local now = GetTime()
+    local key = string.gsub(text, "%d+%.%d+s after press", "")
+    if st and st.key == key and (now - st.at) < 1.0 and st.len <= n then
+      while table.getn(log) > st.len do table.remove(log) end
+      st.n, st.at = st.n + 1, now
+      log[st.len] = string.format("%s  (x%d, until %.2f)", st.line, st.n, now - F_.traceStart)
+      F_.traceLastWait = nil
+      return
+    end
+    local line = string.format("%7.2f  %-8s %s", now - F_.traceStart, kind, text)
+    table.insert(log, line)
+    F_.traceLastWait = nil
+    F_.traceErr = { key = key, at = now, len = table.getn(log), line = line, n = 1 }
+    if table.getn(log) > TRACE_MAX then
+      table.remove(log, 1)
+      F_.traceErr = nil
+    end
+    return
+  elseif st and not (kind == "decide" or kind == "cast" or kind == "event" or kind == "press") then
+    F_.traceErr = nil          -- something else happened in between: nothing is folded across it
+  end
+  -- waits of the same kind are one line ("wait: GCD 0.72s left (x31, until ..)"):
+  -- compared with the numbers taken out since 1.16.12, or the countdown in
+  -- the text made every press its own line
+  local wkey = nil
+  if kind == "press" and string.find(text, "^wait:") then
+    wkey = string.gsub(text, "[%d%.]+", "#")
+  end
+  if wkey and F_.traceLastWait == wkey and n > 0 then
     F_.traceWaitCount = (F_.traceWaitCount or 1) + 1
-    log[n] = string.format("%7.2f  %-8s %s  (x%d, until %.2f)", F_.traceWaitStart, kind, text,
+    log[n] = string.format("%7.2f  %-8s %s  (x%d, until %.2f)", F_.traceWaitStart, kind, F_.traceWaitText or text,
       F_.traceWaitCount, GetTime() - F_.traceStart)
     return
   end
-  F_.traceLastWait = (kind == "press" and string.find(text, "^wait:")) and text or nil
+  F_.traceLastWait = wkey
+  F_.traceWaitText = text
   F_.traceWaitCount = 1
   F_.traceWaitStart = GetTime() - F_.traceStart
   table.insert(log, string.format("%7.2f  %-8s %s", GetTime() - F_.traceStart, kind, text))
-  while table.getn(log) > TRACE_MAX do table.remove(log, 1) end
+  while table.getn(log) > TRACE_MAX do table.remove(log, 1); F_.traceErr = nil end
 end
 
 -- ============================================================
@@ -1383,10 +1419,19 @@ end
 -- the same question as a fallback.
 -- 1.16.7: not while the buff bar is full (see BUFF CAP) - the cast would pay
 -- 30 energy for a buff that never appears.
+-- 1.16.12: not in front of a Bite that is ready to go. Traced on Winterspring
+-- cats (28/11): Tiger's Fury ran out mid-fight at 44 energy and 4 CP, was
+-- recast for 25, the Bite then waited 1.5s for energy, and the Reshift one
+-- second after the Bite wiped the Tiger's Fury again - 25 energy for three
+-- seconds of buff and a later kill (7.4s instead of about 6). So with a Bite
+-- next: if a Reshift can follow it, Tiger's Fury waits for that Reshift
+-- (which removes it anyway); if not, it waits only when it would take the
+-- energy the Bite needs. Six seconds at most, so nothing can hold it for good.
+local reshiftWhy
 local function wantTigersFury(power, pts, ripFirst)
   if not F_.useTigersFury then return false end
+  if getTFRemaining() > 0 then F_.tfWaitSince = nil; return false end
   if power < (F_.costs["Tiger's Fury"] or 30) then return false end
-  if getTFRemaining() > 0 then return false end
   if (GetTime() - F_.lastTFTime) <= 2 then return false end
   if (F_.tfHoldUntil or 0) > GetTime() then return false end
   if countPlayerBuffs() >= BUFF_CAP then
@@ -1394,6 +1439,36 @@ local function wantTigersFury(power, pts, ripFirst)
     return false
   end
   if ripFirst and pts >= 5 and getRipRemaining() < F_.ripRefresh then return false end
+  local biteReady = false
+  if UnitExists("target") then
+    if ripFirst then            -- cat: 5 CP with Rip up means the Bite is next
+      biteReady = pts >= 5
+    else                        -- farm: the test nextSpell_Farm uses for its Bite
+      local hp, max = UnitHealth("target"), UnitHealthMax("target")
+      local frac = (hp and max and max > 0) and (hp / max) or 1
+      local ttd = getTTD()
+      biteReady = pts >= 5 or (pts >= 3 and frac < 0.35) or (pts >= 2 and ((ttd and ttd < 3) or frac < 0.12))
+    end
+  end
+  local hold = false
+  if biteReady then
+    local bite = F_.costs["Ferocious Bite"] or 35
+    if reshiftWhy(0) == nil then
+      hold = true               -- the Reshift after the Bite would wipe it
+    elseif power >= bite and (power - (F_.costs["Tiger's Fury"] or 30)) < bite then
+      hold = true               -- it would take the energy the Bite needs
+    end
+  end
+  if hold then
+    local now = GetTime()
+    if not F_.tfWaitSince or (now - F_.tfWaitSince) > 12 then
+      F_.tfWaitSince = now
+      trace("tf", "Tiger's Fury waits: a Bite is ready (energy " .. tostring(power) .. ", cp " .. tostring(pts) .. ")")
+    end
+    if (now - F_.tfWaitSince) < 6 then return false end
+  else
+    F_.tfWaitSince = nil
+  end
   return true
 end
 
@@ -1805,7 +1880,7 @@ local function manaIncome(window)
   return sum
 end
 
-local function reshiftWhy(power)
+function reshiftWhy(power)
   if not F_.useReshift then return "off" end
   if not (F_.book and F_.book["Reshift"]) then return "not in the spellbook" end
   -- No talent gate: on OctoWoW the 40 energy on shifting is paid whether or
