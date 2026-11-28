@@ -38,7 +38,7 @@ The OctoWoW-specific parts, all read from the talent tree at login:
 - **Lucifron's Curse** doubles every cost while it is on you. The rotation waits for the real price instead of pressing into "Not enough energy", holds Reshift, and the HUD says so - ask for a decurse.
 - **`/fdps farm` on a ?? boss** plays the full cat rotation (Rip, Faerie Fire, boss rules) and says so once; the saved spec is not changed.
 - **Boss potion and juju** (`/fdps pot`, `/fdps juju`) are only counted and announced once their cooldown is seen running. One the game refuses (Mighty Rage on Vaelastrasz) is left alone for 20 s.
-- **Reshift** (OctoWoW's one-press powershift) refills the energy bar when it runs dry. It is only pressed when it is worth at least 20 energy net: what it pays (measured from the bar on the first use - Furor's 40 plus a head enchant, if any) minus what is in the bar minus a Tiger's Fury recast if TF has more than 3 s left. Never without the mana for it, and mana is held back on raid trash. With Judgement of Wisdom (or Moonfang) feeding 300+ mana per 15 s, the mana reserve drops to a single shift's worth, since the next one is already paid for.
+- **Reshift** (OctoWoW's one-press powershift) refills the energy bar when it runs dry. It is only pressed when it is worth at least 20 energy net: what it pays (measured from the bar on the first use - Furor's 40 plus a head enchant, if any) minus what is in the bar minus a Tiger's Fury recast if TF has more than 3 s left. Never without the mana for it, and mana is held back on raid trash. With Judgement of Wisdom (or Moonfang) feeding 300+ mana per 15 s, the mana reserve drops to a single shift's worth, since the next one is already paid for. It is never pressed inside the global cooldown of the ability before it, even when the client shows none (a press there does nothing and locks the next one out).
 - **Tiger's Fury** has no global cooldown on this server and is fired outside the GCD guard, so it goes out the moment it is wanted - including right after a Reshift. It waits when a Bite is ready to go: a Reshift after the Bite would remove it again, and it must not take the energy the Bite needs.
 - **Cenarion Harness** - the pieces on are counted by name; with 5 the Tiger's Fury cost is 25, which the energy check and the Reshift net rule both use.
 - **Rip duration** by combo points (10/12/14/16/18 s), the Idol of Savagery factor, Idol of Ferocity costs and Improved Shred / Ferocity costs are all resolved from the tree and the ranged slot.
@@ -100,7 +100,7 @@ FeralDPS and FeralTrack need **nothing but the OctoWoW client** to load and run.
 
 ## Versions
 
-The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.12`).
+The version in `FeralDPS.toc` is what the addon reports in chat; releases are tagged with it (`v1.16.13`).
 
 Changing the addon: read `DEVELOPMENT.md` first.
 

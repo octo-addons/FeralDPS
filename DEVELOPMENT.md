@@ -35,6 +35,7 @@ Each of these fixed a problem that was measured in the raid logs. Keep them when
 | 1.16.10 | Lucifron's Curse doubles the cost table and holds Reshift (`COST_CURSES`, `curseFactor`, `F_.costFactor`) | `computeCosts`, `refreshCostFactor`, `reshiftWhy` |
 | 1.16.10 | `/fdps farm` on a ?? boss plays the cat rotation | `executeRotation`, `pickSpell` |
 | 1.16.10 | Clearcasting from behind goes to Shred before Bite/Rake (not when Rip is missing or has 3 s or less at 5 CP) | `nextSpell_Cat` |
+| 1.16.13 | Reshift waits 0.95 s after our own last GCD ability (`F_.gcdPressAt`, cleared when that press is refused) - the client's GCD reading can be empty right after a Bite that kills | `tryReshift`, `executeRotation`, error handler |
 | 1.16.12 | Tiger's Fury waits when a Bite is ready: for the Reshift that follows the Bite if one can, otherwise only when it would take the Bite's energy; six seconds at most (`F_.tfWaitSince`) | `wantTigersFury` |
 | 1.16.12 | The trace folds a run of the same refusal into one line and takes the refused press's decide/cast lines back out; waits fold by kind, not by exact text | `trace` |
 | 1.16.11 | **The addon never moves the character.** `/fdps step` was removed: the OctoWoW client blocks `MoveForwardStart()` from addons ("FeralDPS has been blocked from an action only available to the Blizzard UI"). Do not add movement, in any form | - |
@@ -55,10 +56,11 @@ There is no way to run the client from here, so every version is checked like th
 
 The stand-in is a model of the game, not the game. A pass is necessary, not sufficient.
 
-Open after 1.16.12: none of the 1.16.10 changes has been through a raid yet. Mighty Rage Potion is refused on Vaelastrasz for a reason that is not known. If Lucifron's Curse has another name on OctoWoW, change the one entry in `COST_CURSES`.
+Open after 1.16.13: why the client shows no global cooldown after some Bites is not known (seen once, after a Bite that killed the target with a second mob in combat). Also: none of the 1.16.10 changes has been through a raid yet. Mighty Rage Potion is refused on Vaelastrasz for a reason that is not known. If Lucifron's Curse has another name on OctoWoW, change the one entry in `COST_CURSES`.
 
 ## History
 
+- 1.16.13 (28 Nov 2026) - Reshift is no longer pressed into the GCD of the ability before it (traced: 0.3s after a killing Bite the client showed no cooldown; the press did nothing and locked Reshift for 1.5s). Trace: "cannot afford" decisions fold per energy level.
 - 1.16.12 (28 Nov 2026) - Tiger's Fury no longer goes out in front of a ready Bite (traced on Winterspring cats: 25 energy for three seconds of buff, Bite 1.5s late); the trace keeps minutes instead of 20 seconds when a key is held out of range.
 - 1.16.11 (28 Nov 2026) - `/fdps step` removed: the client blocks addons from moving the character (popup on the first step). Everything else from 1.16.10 stays.
 - 1.16.10 (28 Nov 2026) - restores what 1.15.30/31 had (Carnage on landed Bites, Carnage counter, `/fdps step`, README install + troubleshooting); potion/juju confirmed by cooldown; error text no longer blamed on the wrong ability; Lucifron's Curse; farm on a boss plays cat; Clearcasting to Shred; bleeds per target. FeralTrack 1.7.6: "Not enough mana" is its own reason, up to 12 different unknown messages kept.

@@ -119,6 +119,8 @@ env.GetSpellCooldown = function(idx)
   local name = SPELLS[idx]
   local cd = W.cds[name]
   if cd and cd.start + cd.dur > W.t then return cd.start, cd.dur end
+  -- W.hideBiteGcd: the client shows no cooldown after a Bite although the GCD runs (seen in game)
+  if W.hideBiteGcd and W.gcdSpell == "Ferocious Bite" then return 0, 0 end
   if W.gcdStart + W.gcdDur > W.t then return W.gcdStart, W.gcdDur end
   return 0, 0
 end
@@ -187,10 +189,11 @@ local function castByName(name)
   table.insert(W.casts, { t = W.t, spell = name, energy = W.energy, cp = W.cp, cc = cc and true or false })
   if name ~= "Reshift" and name ~= "Tiger's Fury" and name ~= "Berserk" and W.gcdStart + W.gcdDur > W.t + 0.001 then uierr("Ability is not ready yet.") return end
   if name == "Reshift" then
+    if W.gcdStart + W.gcdDur > W.t + 0.001 then W.wastedReshift = (W.wastedReshift or 0) + 1 return end   -- into the GCD: nothing happens, no error
     if W.mana < 348 * k then uierr("Not enough mana") return end
     W.mana = W.mana - 348 * k; W.energy = 0; fire("UNIT_ENERGY", "player"); W.energy = 60; fire("UNIT_ENERGY", "player")
     local i = hasBuff("Tiger's Fury"); if i then table.remove(W.buffs, i) end
-    W.gcdStart, W.gcdDur = W.t, 1.5
+    W.gcdStart, W.gcdDur, W.gcdSpell = W.t, 1.5, "Reshift"
     return
   end
   local cost = (COST[name] or 0) * k
@@ -204,7 +207,7 @@ local function castByName(name)
   if not free and W.energy < cost then uierr("Not enough energy") return end
   if (name == "Rip" or name == "Ferocious Bite") and W.cp < 1 then uierr("That ability requires combo points") return end
   if free then table.remove(W.buffs, cc) else spend(cost) end
-  W.gcdStart, W.gcdDur = W.t, 1.0
+  W.gcdStart, W.gcdDur, W.gcdSpell = W.t, 1.0, name
   if name == "Shred" or name == "Claw" then W.cp = math.min(5, W.cp + 1)
   elseif name == "Rake" then W.cp = math.min(5, W.cp + 1); applyBleed(x, "Rake", 8.1, 2.7)
   elseif name == "Rip" then local d = ({ 10, 12, 14, 16, 18 })[W.cp] * 0.9; W.cp = 0; applyBleed(x, "Rip", d, 1.8)

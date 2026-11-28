@@ -249,5 +249,14 @@ return function(addonPath, isNew)
     return storm .. " lines for 3s out of range"
   end)
 
+  scenario("Reshift is not pressed into the GCD when the client shows none after a Bite", function()
+    local M, env, W, F = boot(addonPath)
+    W.hideBiteGcd = true
+    run(M, 120)
+    check((W.wastedReshift or 0) == 0, (W.wastedReshift or 0) .. " Reshift presses went into a running GCD and did nothing")
+    check(M.count("Ferocious Bite") >= 3, "too few Bites to prove anything: " .. M.count("Ferocious Bite"))
+    return M.count("Reshift") .. " Reshifts, none wasted"
+  end)
+
   return table.concat(out, "\n")
 end

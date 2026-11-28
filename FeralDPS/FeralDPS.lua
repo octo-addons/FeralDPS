@@ -295,6 +295,10 @@ local function trace(kind, text)
   local wkey = nil
   if kind == "press" and string.find(text, "^wait:") then
     wkey = string.gsub(text, "[%d%.]+", "#")
+  elseif kind == "decide" and string.find(text, "%(cannot afford%)$") then
+    -- 1.16.13: waiting for energy is one line per energy level, not one per press
+    local _, _, head = string.find(text, "^(.-) behind=")
+    wkey = "decide:" .. (head or text)
   end
   if wkey and F_.traceLastWait == wkey and n > 0 then
     F_.traceWaitCount = (F_.traceWaitCount or 1) + 1
@@ -1964,6 +1968,21 @@ local function tryReshift(power)
     end
     return false
   end
+  -- 1.16.13: never inside the global cooldown of our own last ability. The
+  -- GCD guard trusts the client's reading, and that reading can be empty
+  -- while the GCD runs: traced 28/11, a Bite killed the target, 0.3s later
+  -- the client showed no cooldown, Reshift was pressed into the Bite's GCD,
+  -- did nothing (no error, no mana spent), and the "just reshifted" lock
+  -- then kept the real one away - 2.1s with an empty bar in a 7s fight. For
+  -- every other ability a press into the GCD costs nothing; for Reshift it
+  -- costs that lock, so Reshift also waits out the clock. A press the game
+  -- refused clears the clock (error handler), so nothing waits on a cast
+  -- that never went out.
+  local sincePress = GetTime() - (F_.gcdPressAt or 0)
+  if sincePress < 0.95 then
+    trace("press", string.format("wait: Reshift after the last ability's GCD (%.2fs)", 0.95 - sincePress))
+    return false
+  end
   local now = GetTime()
   F_.lastReshiftTime = now
   F_.lastCastTime = now
@@ -2267,6 +2286,7 @@ local function executeRotation(specOverride)
   if affordable then
     F_.lastCastTime = GetTime()
     F_.lastAttempt, F_.lastAttemptTime, F_.lastAttemptGcd = spell, GetTime(), true
+    F_.gcdPressAt = GetTime()        -- see tryReshift
     trace("cast", spell)
     castAndTrack(spell, opts.pts)
   elseif isCatSpec(spec) and inCombat then
@@ -4156,6 +4176,7 @@ function FeralDPS_OnLoad()
             F_.frontUntil = now + 3
           end
           if F_.lastAttemptGcd then
+            if attempt ~= "Reshift" then F_.gcdPressAt = 0 end   -- that press started no GCD
             if string.find(m, "not ready") then
               F_.lastCastTime = now - 0.1      -- retry in 0.2s; the GCD reading holds it if needed
             else
